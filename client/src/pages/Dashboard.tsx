@@ -2,19 +2,22 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import {
   RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown,
   ExternalLink, Settings, Activity, AlertCircle, User,
-  Clock, Tag, Layers, Zap
+  Clock, Tag, Layers, Zap, Search, X
 } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type SortField = "key" | "summary" | "status" | "assigneeName" | "updated" | "priority";
+type SortField = "key" | "summary" | "status" | "assigneeName" | "reporterName" | "updated" | "priority";
 type SortDir = "asc" | "desc";
+
+// Stage filter presets — user can also type a custom keyword
+const STAGE_PRESETS = ["All", "SMT", "FATP", "EVT", "DVT", "PVT", "NPI"] as const;
+type StagePreset = (typeof STAGE_PRESETS)[number];
 
 interface JiraIssue {
   key: string;
@@ -24,6 +27,9 @@ interface JiraIssue {
   assigneeId: string | null;
   assigneeName: string | null;
   assigneeAvatar: string | null;
+  reporterId: string | null;
+  reporterName: string | null;
+  reporterAvatar: string | null;
   latestComment: string | null;
   latestCommentAuthor: string | null;
   latestCommentDate: string | null;
@@ -33,9 +39,9 @@ interface JiraIssue {
   url: string;
 }
 
-// ─── Status helpers ─────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────
 
-function getStatusStyle(statusCategory: string, statusName: string): { bg: string; text: string; dot: string } {
+function getStatusStyle(statusCategory: string, statusName: string) {
   const name = statusName.toLowerCase();
   if (statusCategory === "done") return { bg: "bg-emerald-500/15", text: "text-emerald-400", dot: "bg-emerald-400" };
   if (statusCategory === "indeterminate" || name.includes("progress") || name.includes("review") || name.includes("testing"))
@@ -47,15 +53,14 @@ function getStatusStyle(statusCategory: string, statusName: string): { bg: strin
   return { bg: "bg-purple-500/15", text: "text-purple-400", dot: "bg-purple-400" };
 }
 
-function getPriorityStyle(priority: string | null): { color: string; label: string } {
-  switch (priority?.toLowerCase()) {
-    case "highest": return { color: "text-red-400", label: "Highest" };
-    case "high":    return { color: "text-orange-400", label: "High" };
-    case "medium":  return { color: "text-yellow-400", label: "Medium" };
-    case "low":     return { color: "text-blue-400", label: "Low" };
-    case "lowest":  return { color: "text-slate-400", label: "Lowest" };
-    default:        return { color: "text-slate-500", label: priority ?? "—" };
-  }
+function getPriorityStyle(priority: string | null) {
+  const p = priority?.toLowerCase() ?? "";
+  if (p === "p0" || p === "highest" || p === "blocker") return { bg: "bg-red-500/20", text: "text-red-300", ring: "ring-red-500/40" };
+  if (p === "p1" || p === "high")   return { bg: "bg-orange-500/20", text: "text-orange-300", ring: "ring-orange-500/40" };
+  if (p === "p2" || p === "medium") return { bg: "bg-yellow-500/20", text: "text-yellow-300", ring: "ring-yellow-500/40" };
+  if (p === "p3" || p === "low")    return { bg: "bg-blue-500/20", text: "text-blue-300", ring: "ring-blue-500/40" };
+  if (p === "p4" || p === "lowest") return { bg: "bg-slate-500/20", text: "text-slate-400", ring: "ring-slate-500/40" };
+  return { bg: "bg-muted/60", text: "text-muted-foreground", ring: "ring-border" };
 }
 
 function formatDate(dateStr: string): string {
@@ -70,7 +75,19 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: days > 365 ? "numeric" : undefined });
 }
 
-// ─── Sort Icon ──────────────────────────────────────────────────────────────────
+/** Case-insensitive keyword match against title + latest comment */
+function issueMatchesKeyword(issue: JiraIssue, keyword: string): boolean {
+  if (!keyword) return true;
+  const kw = keyword.toLowerCase();
+  const haystack = [
+    issue.summary,
+    issue.latestComment ?? "",
+    issue.issueType ?? "",
+  ].join(" ").toLowerCase();
+  return haystack.includes(kw);
+}
+
+// ─── Sub-components ─────────────────────────────────────────────────────────────
 
 function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
   if (field !== sortField) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-30" />;
@@ -79,17 +96,128 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
     : <ChevronDown className="w-3.5 h-3.5 text-primary" />;
 }
 
-// ─── Skeleton Row ───────────────────────────────────────────────────────────────
+function SortTh({ field, label, sortField, sortDir, onSort, className = "" }: {
+  field: SortField; label: string; sortField: SortField; sortDir: SortDir;
+  onSort: (f: SortField) => void; className?: string;
+}) {
+  return (
+    <th className={`px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${className}`}>
+      <button className="flex items-center gap-1 hover:text-foreground transition-colors" onClick={() => onSort(field)}>
+        {label} <SortIcon field={field} sortField={sortField} sortDir={sortDir} />
+      </button>
+    </th>
+  );
+}
 
 function SkeletonRow() {
   return (
     <tr className="border-b border-border/40">
-      {[80, 200, 120, 100, 100, 80].map((w, i) => (
+      {[70, 200, 60, 160, 100, 100, 100, 80].map((w, i) => (
         <td key={i} className="px-4 py-3">
           <div className="h-4 rounded animate-pulse bg-muted" style={{ width: w }} />
         </td>
       ))}
     </tr>
+  );
+}
+
+function AvatarCell({ avatar, name, isMe }: { avatar: string | null; name: string | null; isMe?: boolean }) {
+  if (!name) return <span className="text-xs text-muted-foreground/40">—</span>;
+  return (
+    <div className="flex items-center gap-2">
+      {avatar ? (
+        <img src={avatar} alt="" className="w-5 h-5 rounded-full flex-shrink-0" />
+      ) : (
+        <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+          <User className="w-3 h-3 text-muted-foreground" />
+        </div>
+      )}
+      <span className={`text-xs truncate max-w-[110px] ${isMe ? "text-amber-300 font-semibold" : "text-foreground"}`}>
+        {isMe ? "You" : name}
+      </span>
+    </div>
+  );
+}
+
+// ─── Stage Filter Bar ───────────────────────────────────────────────────────────
+
+function StageFilterBar({
+  activePreset, customKeyword, onPreset, onCustom, matchCount, totalCount
+}: {
+  activePreset: StagePreset;
+  customKeyword: string;
+  onPreset: (p: StagePreset) => void;
+  onCustom: (v: string) => void;
+  matchCount: number;
+  totalCount: number;
+}) {
+  const [inputValue, setInputValue] = useState(customKeyword);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") onCustom(inputValue.trim());
+    if (e.key === "Escape") { setInputValue(""); onCustom(""); }
+  };
+
+  const handleClear = () => { setInputValue(""); onCustom(""); onPreset("All"); };
+
+  const isFiltered = activePreset !== "All" || customKeyword !== "";
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/40 flex-wrap"
+      style={{ background: "oklch(0.145 0.011 250)" }}>
+      {/* Preset chips */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {STAGE_PRESETS.map((p) => (
+          <button
+            key={p}
+            onClick={() => { onPreset(p); setInputValue(""); onCustom(""); }}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+              activePreset === p && customKeyword === ""
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+
+      {/* Divider */}
+      <div className="w-px h-4 bg-border/60" />
+
+      {/* Custom keyword search */}
+      <div className="relative flex items-center">
+        <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={() => onCustom(inputValue.trim())}
+          placeholder="Filter by keyword…"
+          className="pl-8 pr-7 py-1 text-xs rounded-md bg-muted/60 border border-border/60 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 w-44 transition-all"
+        />
+        {inputValue && (
+          <button onClick={handleClear} className="absolute right-2 text-muted-foreground hover:text-foreground">
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Match count */}
+      {isFiltered && (
+        <span className="text-xs text-muted-foreground ml-1">
+          <span className="font-semibold text-foreground">{matchCount}</span> of {totalCount} issues
+        </span>
+      )}
+
+      {/* Clear all */}
+      {isFiltered && (
+        <button onClick={handleClear} className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 ml-auto">
+          Clear filter
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -106,32 +234,42 @@ function IssueTable({
 }) {
   const [sortField, setSortField] = useState<SortField>("updated");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [activePreset, setActivePreset] = useState<StagePreset>("All");
+  const [customKeyword, setCustomKeyword] = useState("");
 
   const handleSort = (field: SortField) => {
     if (field === sortField) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortField(field); setSortDir("desc"); }
   };
 
+  // Effective filter keyword: preset takes priority unless custom is set
+  const effectiveKeyword = customKeyword !== "" ? customKeyword : (activePreset !== "All" ? activePreset : "");
+
+  const filtered = useMemo(() =>
+    issues.filter((i) => issueMatchesKeyword(i, effectiveKeyword)),
+    [issues, effectiveKeyword]
+  );
+
   const sorted = useMemo(() => {
-    return [...issues].sort((a, b) => {
-      let av: string, bv: string;
-      if (sortField === "updated") {
-        av = a.updated; bv = b.updated;
-      } else if (sortField === "key") {
-        // Sort by numeric part of key
+    return [...filtered].sort((a, b) => {
+      if (sortField === "key") {
         const numA = parseInt(a.key.replace(/\D/g, "")) || 0;
         const numB = parseInt(b.key.replace(/\D/g, "")) || 0;
         return sortDir === "asc" ? numA - numB : numB - numA;
-      } else {
-        av = (a[sortField] ?? "") as string;
-        bv = (b[sortField] ?? "") as string;
       }
+      if (sortField === "priority") {
+        const order: Record<string, number> = { p0: 0, highest: 0, blocker: 0, p1: 1, high: 1, p2: 2, medium: 2, p3: 3, low: 3, p4: 4, lowest: 4 };
+        const av = order[(a.priority ?? "").toLowerCase()] ?? 99;
+        const bv = order[(b.priority ?? "").toLowerCase()] ?? 99;
+        return sortDir === "asc" ? av - bv : bv - av;
+      }
+      const av = (a[sortField as keyof JiraIssue] ?? "") as string;
+      const bv = (b[sortField as keyof JiraIssue] ?? "") as string;
       const cmp = av.localeCompare(bv);
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [issues, sortField, sortDir]);
+  }, [filtered, sortField, sortDir]);
 
-  const thCls = "px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap";
   const tdCls = "px-4 py-3 text-sm";
 
   if (error) {
@@ -144,164 +282,157 @@ function IssueTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="border-b border-border/60" style={{ borderBottomColor: `${projectColor}30` }}>
-            <th className={thCls}>
-              <button className="sort-header flex items-center gap-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors" onClick={() => handleSort("key")}>
-                Issue <SortIcon field="key" sortField={sortField} sortDir={sortDir} />
-              </button>
-            </th>
-            <th className={thCls}>
-              <button className="sort-header flex items-center gap-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors" onClick={() => handleSort("summary")}>
-                Title <SortIcon field="summary" sortField={sortField} sortDir={sortDir} />
-              </button>
-            </th>
-            <th className={`${thCls} min-w-[200px]`}>Latest Update</th>
-            <th className={thCls}>
-              <button className="sort-header flex items-center gap-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors" onClick={() => handleSort("status")}>
-                Status <SortIcon field="status" sortField={sortField} sortDir={sortDir} />
-              </button>
-            </th>
-            <th className={thCls}>
-              <button className="sort-header flex items-center gap-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors" onClick={() => handleSort("assigneeName")}>
-                Assignee <SortIcon field="assigneeName" sortField={sortField} sortDir={sortDir} />
-              </button>
-            </th>
-            <th className={thCls}>
-              <button className="sort-header flex items-center gap-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors" onClick={() => handleSort("updated")}>
-                Updated <SortIcon field="updated" sortField={sortField} sortDir={sortDir} />
-              </button>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading && !issues.length && Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)}
-          {!loading && sorted.length === 0 && (
-            <tr>
-              <td colSpan={6} className="text-center py-16 text-muted-foreground text-sm">
-                <div className="flex flex-col items-center gap-2">
-                  <Activity className="w-8 h-8 opacity-30" />
-                  <span>No open issues found</span>
-                </div>
-              </td>
+    <div className="flex flex-col h-full">
+      {/* Filter Bar */}
+      <StageFilterBar
+        activePreset={activePreset}
+        customKeyword={customKeyword}
+        onPreset={(p) => { setActivePreset(p); setCustomKeyword(""); }}
+        onCustom={(v) => { setCustomKeyword(v); if (v) setActivePreset("All"); }}
+        matchCount={sorted.length}
+        totalCount={issues.length}
+      />
+
+      {/* Table */}
+      <div className="overflow-auto flex-1">
+        <table className="w-full border-collapse min-w-[1050px]">
+          <thead className="sticky top-0 z-10" style={{ background: "oklch(0.145 0.011 250)" }}>
+            <tr className="border-b border-border/60" style={{ borderBottomColor: `${projectColor}30` }}>
+              <SortTh field="key" label="Issue" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortTh field="summary" label="Title" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="min-w-[220px]" />
+              <SortTh field="priority" label="Priority" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap min-w-[200px]">Latest Update</th>
+              <SortTh field="status" label="Status" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortTh field="assigneeName" label="Assignee" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortTh field="reporterName" label="Reporter" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortTh field="updated" label="Updated" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
             </tr>
-          )}
-          {sorted.map((issue) => {
-            const isMe = issue.assigneeId === myAccountId;
-            const statusStyle = getStatusStyle(issue.statusCategory, issue.status);
-            const priorityStyle = getPriorityStyle(issue.priority);
-
-            return (
-              <tr
-                key={issue.key}
-                className={`border-b border-border/30 transition-colors group cursor-pointer ${
-                  isMe
-                    ? "bg-amber-500/8 hover:bg-amber-500/12 border-l-2"
-                    : "hover:bg-muted/40"
-                }`}
-                style={isMe ? { borderLeftColor: "oklch(0.72 0.18 60)" } : undefined}
-                onClick={() => window.open(issue.url, "_blank")}
-              >
-                {/* Issue Key */}
-                <td className={`${tdCls} font-mono`}>
-                  <div className="flex items-center gap-2">
-                    {isMe && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="inline-flex w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                        </TooltipTrigger>
-                        <TooltipContent>Assigned to you</TooltipContent>
-                      </Tooltip>
-                    )}
-                    <span
-                      className="text-xs font-semibold hover:underline"
-                      style={{ color: projectColor }}
-                    >
-                      {issue.key}
+          </thead>
+          <tbody>
+            {loading && !issues.length && Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)}
+            {!loading && sorted.length === 0 && (
+              <tr>
+                <td colSpan={8} className="text-center py-16 text-muted-foreground text-sm">
+                  <div className="flex flex-col items-center gap-2">
+                    <Activity className="w-8 h-8 opacity-30" />
+                    <span>
+                      {effectiveKeyword
+                        ? `No issues match "${effectiveKeyword}"`
+                        : "No open issues found"}
                     </span>
-                    <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" />
-                  </div>
-                </td>
-
-                {/* Title */}
-                <td className={`${tdCls} max-w-xs`}>
-                  <div className="flex items-start gap-2">
-                    <div>
-                      <p className={`font-medium text-sm leading-snug line-clamp-2 ${isMe ? "text-amber-100" : "text-foreground"}`}>
-                        {issue.summary}
-                      </p>
-                      {issue.issueType && (
-                        <span className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                          <Tag className="w-2.5 h-2.5" />{issue.issueType}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </td>
-
-                {/* Latest Comment */}
-                <td className={`${tdCls} max-w-sm`}>
-                  {issue.latestComment ? (
-                    <div>
-                      <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                        {issue.latestComment}
-                      </p>
-                      {issue.latestCommentAuthor && (
-                        <p className="text-xs text-muted-foreground/60 mt-0.5">
-                          — {issue.latestCommentAuthor}
-                          {issue.latestCommentDate && (
-                            <span className="ml-1">· {formatDate(issue.latestCommentDate)}</span>
-                          )}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-xs text-muted-foreground/40 italic">No comments</span>
-                  )}
-                </td>
-
-                {/* Status */}
-                <td className={tdCls}>
-                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${statusStyle.dot}`} />
-                    {issue.status}
-                  </span>
-                </td>
-
-                {/* Assignee */}
-                <td className={tdCls}>
-                  {issue.assigneeName ? (
-                    <div className="flex items-center gap-2">
-                      {issue.assigneeAvatar ? (
-                        <img src={issue.assigneeAvatar} alt="" className="w-5 h-5 rounded-full flex-shrink-0" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                          <User className="w-3 h-3 text-muted-foreground" />
-                        </div>
-                      )}
-                      <span className={`text-xs truncate max-w-[120px] ${isMe ? "text-amber-300 font-semibold" : "text-foreground"}`}>
-                        {isMe ? "You" : issue.assigneeName}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-muted-foreground/50">Unassigned</span>
-                  )}
-                </td>
-
-                {/* Updated */}
-                <td className={tdCls}>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="w-3 h-3 flex-shrink-0" />
-                    <span>{formatDate(issue.updated)}</span>
                   </div>
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            )}
+            {sorted.map((issue) => {
+              const isMe = issue.assigneeId === myAccountId;
+              const statusStyle = getStatusStyle(issue.statusCategory, issue.status);
+              const priorityStyle = getPriorityStyle(issue.priority);
+
+              return (
+                <tr
+                  key={issue.key}
+                  className={`border-b border-border/30 transition-colors group cursor-pointer ${
+                    isMe
+                      ? "bg-amber-500/8 hover:bg-amber-500/12 border-l-2"
+                      : "hover:bg-muted/40"
+                  }`}
+                  style={isMe ? { borderLeftColor: "oklch(0.72 0.18 60)" } : undefined}
+                  onClick={() => window.open(issue.url, "_blank")}
+                >
+                  {/* Issue Key */}
+                  <td className={`${tdCls} font-mono`}>
+                    <div className="flex items-center gap-2">
+                      {isMe && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                          </TooltipTrigger>
+                          <TooltipContent>Assigned to you</TooltipContent>
+                        </Tooltip>
+                      )}
+                      <span className="text-xs font-semibold hover:underline" style={{ color: projectColor }}>
+                        {issue.key}
+                      </span>
+                      <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" />
+                    </div>
+                  </td>
+
+                  {/* Title */}
+                  <td className={`${tdCls} max-w-xs`}>
+                    <p className={`font-medium text-sm leading-snug line-clamp-2 ${isMe ? "text-amber-100" : "text-foreground"}`}>
+                      {issue.summary}
+                    </p>
+                    {issue.issueType && (
+                      <span className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                        <Tag className="w-2.5 h-2.5" />{issue.issueType}
+                      </span>
+                    )}
+                  </td>
+
+                  {/* Priority */}
+                  <td className={tdCls}>
+                    {issue.priority ? (
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ring-1 ${priorityStyle.bg} ${priorityStyle.text} ${priorityStyle.ring}`}>
+                        {issue.priority}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/40">—</span>
+                    )}
+                  </td>
+
+                  {/* Latest Comment */}
+                  <td className={`${tdCls} max-w-sm`}>
+                    {issue.latestComment ? (
+                      <div>
+                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                          {issue.latestComment}
+                        </p>
+                        {issue.latestCommentAuthor && (
+                          <p className="text-xs text-muted-foreground/60 mt-0.5">
+                            — {issue.latestCommentAuthor}
+                            {issue.latestCommentDate && (
+                              <span className="ml-1">· {formatDate(issue.latestCommentDate)}</span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/40 italic">No comments</span>
+                    )}
+                  </td>
+
+                  {/* Status */}
+                  <td className={tdCls}>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${statusStyle.dot}`} />
+                      {issue.status}
+                    </span>
+                  </td>
+
+                  {/* Assignee */}
+                  <td className={tdCls}>
+                    <AvatarCell avatar={issue.assigneeAvatar} name={issue.assigneeName} isMe={isMe} />
+                  </td>
+
+                  {/* Reporter */}
+                  <td className={tdCls}>
+                    <AvatarCell avatar={issue.reporterAvatar} name={issue.reporterName} />
+                  </td>
+
+                  {/* Updated */}
+                  <td className={tdCls}>
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="w-3 h-3 flex-shrink-0" />
+                      <span>{formatDate(issue.updated)}</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -343,7 +474,6 @@ export default function Dashboard() {
     toast.success("Issues refreshed");
   }, [refetch]);
 
-  // Auto-refresh every 5 minutes
   useEffect(() => {
     if (!autoRefresh) return;
     const id = setInterval(handleRefresh, 5 * 60 * 1000);
@@ -359,7 +489,6 @@ export default function Dashboard() {
       {/* ── Sidebar ── */}
       <aside className="w-64 flex-shrink-0 border-r border-border/60 flex flex-col"
         style={{ background: "oklch(0.14 0.012 250)" }}>
-        {/* Logo */}
         <div className="px-5 py-5 border-b border-border/60">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -372,7 +501,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Projects Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           <p className="px-2 mb-2 text-xs font-semibold text-muted-foreground/60 uppercase tracking-widest">Projects</p>
           {projectsLoading && (
@@ -395,10 +523,7 @@ export default function Dashboard() {
                 }`}
                 style={isActive ? { background: `${project.color}18`, borderLeft: `3px solid ${project.color}` } : undefined}
               >
-                <span
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  style={{ background: project.color ?? "#6366f1" }}
-                />
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: project.color ?? "#6366f1" }} />
                 <span className="flex-1 text-left truncate">{project.name}</span>
                 <span className="text-xs font-mono opacity-50">{project.key}</span>
               </button>
@@ -406,8 +531,7 @@ export default function Dashboard() {
           })}
         </nav>
 
-        {/* Footer */}
-        <div className="px-3 py-3 border-t border-border/60 space-y-1">
+        <div className="px-3 py-3 border-t border-border/60">
           <button
             onClick={() => navigate("/admin")}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
@@ -427,10 +551,7 @@ export default function Dashboard() {
             <div className="flex items-center gap-3 min-w-0">
               {activeProject && (
                 <>
-                  <div
-                    className="w-3 h-3 rounded-full flex-shrink-0"
-                    style={{ background: activeProject.color ?? "#6366f1" }}
-                  />
+                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: activeProject.color ?? "#6366f1" }} />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-bold text-foreground truncate">{activeProject.name}</h2>
@@ -469,8 +590,7 @@ export default function Dashboard() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
-                    variant="outline"
-                    size="sm"
+                    variant="outline" size="sm"
                     onClick={() => setAutoRefresh((v) => !v)}
                     className={`gap-1.5 text-xs ${autoRefresh ? "border-primary/50 text-primary bg-primary/10" : ""}`}
                   >
@@ -481,8 +601,7 @@ export default function Dashboard() {
                 <TooltipContent>{autoRefresh ? "Auto-refresh ON (5 min)" : "Enable auto-refresh"}</TooltipContent>
               </Tooltip>
               <Button
-                variant="outline"
-                size="sm"
+                variant="outline" size="sm"
                 onClick={handleRefresh}
                 disabled={isFetching}
                 className="gap-1.5 text-xs"
@@ -494,8 +613,8 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Issue Table */}
-        <div className="flex-1 overflow-auto">
+        {/* Issue Table (includes filter bar internally) */}
+        <div className="flex-1 overflow-hidden flex flex-col">
           <IssueTable
             issues={issues}
             loading={issuesLoading}
@@ -507,11 +626,9 @@ export default function Dashboard() {
 
         {/* Footer */}
         <footer className="flex-shrink-0 border-t border-border/40 px-6 py-2.5 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground/60">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-400/80" />
-              Highlighted rows are assigned to you
-            </span>
+          <p className="text-xs text-muted-foreground/60 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-amber-400/80" />
+            Highlighted rows are assigned to you
           </p>
           <p className="text-xs text-muted-foreground/40">Click any row to open in Jira</p>
         </footer>

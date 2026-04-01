@@ -54,6 +54,9 @@ export interface JiraIssue {
   assigneeId: string | null;
   assigneeName: string | null;
   assigneeAvatar: string | null;
+  reporterId: string | null;
+  reporterName: string | null;
+  reporterAvatar: string | null;
   latestComment: string | null;
   latestCommentAuthor: string | null;
   latestCommentDate: string | null;
@@ -71,7 +74,7 @@ export async function fetchOpenIssues(projectKey: string, maxResults = 100): Pro
   const response = await jiraClient.post("/rest/api/3/search/jql", {
     jql,
     maxResults,
-    fields: ["summary", "status", "assignee", "updated", "comment", "priority", "issuetype"],
+    fields: ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype"],
   });
 
   const issues = response.data.issues as unknown[];
@@ -117,6 +120,14 @@ export async function fetchOpenIssues(projectKey: string, maxResults = 100): Pro
     const issueTypeObj = fields.issuetype as Record<string, unknown> | null;
     const issueType = (issueTypeObj?.name as string) ?? null;
 
+    // Reporter
+    const reporterObj = fields.reporter as Record<string, unknown> | null;
+    const reporterId = (reporterObj?.accountId as string) ?? null;
+    const reporterName = (reporterObj?.displayName as string) ?? null;
+    const reporterAvatar = reporterObj
+      ? ((reporterObj.avatarUrls as Record<string, string>)?.["24x24"] ?? null)
+      : null;
+
     return {
       key: issue.key as string,
       summary: (fields.summary as string) ?? "",
@@ -125,6 +136,9 @@ export async function fetchOpenIssues(projectKey: string, maxResults = 100): Pro
       assigneeId,
       assigneeName,
       assigneeAvatar,
+      reporterId,
+      reporterName,
+      reporterAvatar,
       latestComment,
       latestCommentAuthor,
       latestCommentDate,

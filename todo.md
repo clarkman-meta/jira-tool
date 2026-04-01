@@ -22,3 +22,12 @@
 ## Testing
 - [x] Vitest: Jira API proxy route
 - [x] Vitest: project CRUD routes (covered in jira.test.ts)
+
+## New Columns (Round 2)
+- [ ] Investigate Jira fields: priority (P0/P1/P2), reporter, fixVersions/customField for Build
+- [ ] Update server/jira.ts to fetch reporter, fixVersions, and custom build fields
+- [ ] Add Priority, Reporter, Build columns to the issue table in Dashboard.tsx
+- [ ] Make new columns sortable
+- [ ] Update vitest tests for new fields
+- [x] Remove Build column from frontend table and backend jira.ts (not available in Dragon/SSG)
+- [x] Add stage filter bar (SMT / FATP / All) that filters issues by keyword match in title and latest comment
