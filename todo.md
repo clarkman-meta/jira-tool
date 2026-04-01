@@ -41,3 +41,6 @@
 - [x] In issue table: pin watched issues to top with a star indicator, filter out hidden issues
 - [x] Add Watch List management panel (sidebar or modal): input to add issue key, list to remove
 - [x] Watched issues pinned to top of table (already in open issues list)
+
+## Bug Fixes
+- [x] Fix issue count discrepancy: implemented cursor-based pagination to fetch ALL pages (was only fetching first 100/200 issues)

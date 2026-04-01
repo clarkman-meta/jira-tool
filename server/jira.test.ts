@@ -118,11 +118,28 @@ describe("fetchOpenIssues", () => {
     expect(callArgs[1].jql).toContain("DGTK");
   });
 
-  it("respects maxResults parameter", async () => {
-    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+  it("uses fixed PAGE_SIZE of 100 for cursor-based pagination", async () => {
+    // The new pagination implementation always uses PAGE_SIZE=100 per page
+    // regardless of the _maxResults parameter (which is now unused)
+    mockPost.mockResolvedValueOnce({ data: { issues: [], isLast: true } });
     await fetchOpenIssues("DGTK", 50);
     const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
-    expect(callArgs[1].maxResults).toBe(50);
+    expect(callArgs[1].maxResults).toBe(100);
+  });
+
+  it("fetches multiple pages when isLast is false", async () => {
+    const issue1 = { ...makeIssue(), key: "DGTK-1" };
+    const issue2 = { ...makeIssue(), key: "DGTK-2" };
+    mockPost
+      .mockResolvedValueOnce({ data: { issues: [issue1], nextPageToken: "token123", isLast: false } })
+      .mockResolvedValueOnce({ data: { issues: [issue2], isLast: true } });
+    const result = await fetchOpenIssues("DGTK");
+    expect(result).toHaveLength(2);
+    expect(result[0].key).toBe("DGTK-1");
+    expect(result[1].key).toBe("DGTK-2");
+    // Second call should include nextPageToken
+    const secondCallArgs = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+    expect(secondCallArgs[1].nextPageToken).toBe("token123");
   });
 });
 
