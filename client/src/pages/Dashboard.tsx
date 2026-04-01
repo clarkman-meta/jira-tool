@@ -227,7 +227,8 @@ function StageFilterBar({
 // ─── Issue Table ────────────────────────────────────────────────────────────────
 
 function IssueTable({
-  issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys
+  issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys,
+  activeProjectKey, onHideIssue, onPinIssue
 }: {
   issues: JiraIssue[];
   loading: boolean;
@@ -236,6 +237,9 @@ function IssueTable({
   projectColor: string;
   projectKey: string;
   watchedKeys: Set<string>;
+  activeProjectKey: string;
+  onHideIssue: (key: string) => void;
+  onPinIssue: (key: string) => void;
 }) {
   // Default: priority asc first, updated desc as secondary
   const [sorts, setSorts] = useState<SortConfig[]>([
@@ -246,6 +250,8 @@ function IssueTable({
   const sortDir = sorts[0]?.dir ?? "asc";
   const [activePreset, setActivePreset] = useState<StagePreset>("All");
   const [customKeyword, setCustomKeyword] = useState("");
+  const [pinInput, setPinInput] = useState("");
+  const [pinOpen, setPinOpen] = useState(false);
 
   const handleSort = (field: SortField) => {
     setSorts(prev => {
@@ -319,14 +325,58 @@ function IssueTable({
   return (
     <div className="flex flex-col h-full">
       {/* Filter Bar */}
-      <StageFilterBar
-        activePreset={activePreset}
-        customKeyword={customKeyword}
-        onPreset={(p) => { setActivePreset(p); setCustomKeyword(""); }}
-        onCustom={(v) => { setCustomKeyword(v); if (v) setActivePreset("All"); }}
-        matchCount={sorted.length}
-        totalCount={issues.length}
-      />
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 flex-wrap"
+        style={{ background: "oklch(0.145 0.011 250)" }}>
+        <StageFilterBar
+          activePreset={activePreset}
+          customKeyword={customKeyword}
+          onPreset={(p) => { setActivePreset(p); setCustomKeyword(""); }}
+          onCustom={(v) => { setCustomKeyword(v); if (v) setActivePreset("All"); }}
+          matchCount={sorted.length}
+          totalCount={issues.length}
+        />
+        {/* Pin / Hide quick-add controls */}
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          {pinOpen ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                type="text"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { onPinIssue(pinInput.trim().toUpperCase()); setPinInput(""); setPinOpen(false); }
+                  if (e.key === "Escape") { setPinInput(""); setPinOpen(false); }
+                }}
+                placeholder="e.g. DGTK-123"
+                className="px-2.5 py-1 text-xs rounded-md bg-background border border-border/60 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-sky-500/50 w-36"
+              />
+              <button
+                onClick={() => { onPinIssue(pinInput.trim().toUpperCase()); setPinInput(""); setPinOpen(false); }}
+                className="px-2.5 py-1 rounded-md text-xs font-medium bg-sky-500/20 text-sky-400 hover:bg-sky-500/30 transition-colors flex items-center gap-1"
+              >
+                <Star className="w-3 h-3" /> Pin
+              </button>
+              <button onClick={() => { setPinInput(""); setPinOpen(false); }} className="text-muted-foreground hover:text-foreground">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setPinOpen(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <Star className="w-3 h-3" />
+                  <span className="hidden sm:inline">Pin Issue</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Pin a specific issue to the top</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      </div>
 
       {/* Table */}
       <div className="overflow-auto flex-1">
@@ -341,13 +391,14 @@ function IssueTable({
               <SortTh field="assigneeName" label="Assignee" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
               <SortTh field="reporterName" label="Reporter" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
               <SortTh field="updated" label="Updated" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <th className="px-3 py-3 w-8" />
             </tr>
           </thead>
           <tbody>
             {loading && !issues.length && Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)}
             {!loading && sorted.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center py-16 text-muted-foreground text-sm">
+                <td colSpan={9} className="text-center py-16 text-muted-foreground text-sm">
                   <div className="flex flex-col items-center gap-2">
                     <Activity className="w-8 h-8 opacity-30" />
                     <span>
@@ -473,6 +524,21 @@ function IssueTable({
                       <Clock className="w-3 h-3 flex-shrink-0" />
                       <span>{formatDate(issue.updated)}</span>
                     </div>
+                  </td>
+
+                  {/* Hide (×) */}
+                  <td className="px-2 py-3 w-8">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onHideIssue(issue.key); }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-400 p-0.5 rounded"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Hide this issue</TooltipContent>
+                    </Tooltip>
                   </td>
                 </tr>
               );
@@ -740,6 +806,28 @@ export default function Dashboard() {
 
   const myIssueCount = issues.filter((i) => i.assigneeId === myAccountId).length;
 
+  const utils = trpc.useUtils();
+  const addHide = trpc.hidden.add.useMutation({
+    onSuccess: () => { utils.hidden.list.invalidate(); toast.success("Issue hidden"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const addWatch = trpc.watchlist.add.useMutation({
+    onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Issue pinned"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleHideIssue = useCallback((key: string) => {
+    if (!key) return;
+    const projectKey = key.includes("-") ? key.split("-")[0] : activeKey;
+    addHide.mutate({ issueKey: key, projectKey });
+  }, [addHide, activeKey]);
+
+  const handlePinIssue = useCallback((key: string) => {
+    if (!key) return;
+    const projectKey = key.includes("-") ? key.split("-")[0] : activeKey;
+    addWatch.mutate({ issueKey: key, projectKey });
+  }, [addWatch, activeKey]);
+
   return (
     <div className="min-h-screen bg-background flex">
       {/* Invisible component that fetches pinned issues and merges them into the table */}
@@ -791,10 +879,6 @@ export default function Dashboard() {
             );
           })}
         </nav>
-
-        <div className="border-t border-border/60">
-          <WatchListPanel activeProjectKey={activeKey} />
-        </div>
 
         <div className="px-3 py-3 border-t border-border/60">
           <button
@@ -888,6 +972,9 @@ export default function Dashboard() {
             projectColor={activeProject?.color ?? "#6366f1"}
             projectKey={activeKey}
             watchedKeys={watchedKeys}
+            activeProjectKey={activeKey}
+            onHideIssue={handleHideIssue}
+            onPinIssue={handlePinIssue}
           />
         </div>
 

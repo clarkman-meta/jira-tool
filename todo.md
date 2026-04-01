@@ -50,3 +50,7 @@
 ## Round 4
 - [x] Fetch real JQL filter from Diamond board (DGTK-234 board) and Hypernova2 dashboard (29923) and apply as titleFilter
 - [x] Build Pinned Issues feature: add issue key → fetch from Jira → pin to top with special highlight + delete icon (PinnedIssuesMerger component, shows even if not in open list)
+
+## UX Improvements (Round 5)
+- [x] Move Pin/Hide input controls from sidebar bottom into the filter bar area above the table
+- [x] Add per-row hide (×) delete button as the last column in the issue table
