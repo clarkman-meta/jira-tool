@@ -252,6 +252,7 @@ function IssueTable({
   const [customKeyword, setCustomKeyword] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [pinOpen, setPinOpen] = useState(false);
+  const [myIssuesOnly, setMyIssuesOnly] = useState(false);
 
   const handleSort = (field: SortField) => {
     setSorts(prev => {
@@ -273,8 +274,10 @@ function IssueTable({
   const effectiveKeyword = customKeyword !== "" ? customKeyword : (activePreset !== "All" ? activePreset : "");
 
   const filtered = useMemo(() =>
-    issues.filter((i) => issueMatchesKeyword(i, effectiveKeyword)),
-    [issues, effectiveKeyword]
+    issues
+      .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
+      .filter((i) => !myIssuesOnly || i.assigneeId === myAccountId),
+    [issues, effectiveKeyword, myIssuesOnly, myAccountId]
   );
 
   const sorted = useMemo(() => {
@@ -335,6 +338,28 @@ function IssueTable({
           matchCount={sorted.length}
           totalCount={issues.length}
         />
+        {/* My Issues Toggle */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => setMyIssuesOnly((v) => !v)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all flex-shrink-0 ${
+                myIssuesOnly
+                  ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                  : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <User className="w-3 h-3" />
+              <span className="hidden sm:inline">My Issues</span>
+              {myIssuesOnly && (
+                <span className="ml-0.5 bg-amber-500/30 text-amber-200 rounded-full px-1.5 text-[10px] font-bold">
+                  {sorted.length}
+                </span>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{myIssuesOnly ? "Showing only your issues — click to show all" : "Show only issues assigned to you"}</TooltipContent>
+        </Tooltip>
         {/* Pin / Hide quick-add controls */}
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           {pinOpen ? (

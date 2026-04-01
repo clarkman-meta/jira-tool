@@ -65,3 +65,6 @@
 - [x] Seed Hypernova2: project = KITE AND "Build[Dropdown]" IN (P0,P1) AND status NOT IN (Closed, Done)
 - [x] Seed SSG (TPZ): project = TPZ AND summary ~ "[P2]" AND statusCategory != Done AND status != Closed
 - [x] Update Admin UI to show/edit customJql field per project (textarea with full JQL editing)
+
+## Round 7 - My Issues Toggle
+- [x] Add "My Issues" toggle button in the filter bar to filter issues assigned to Clark Hsu
