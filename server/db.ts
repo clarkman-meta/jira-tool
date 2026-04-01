@@ -92,9 +92,9 @@ export async function getUserByOpenId(openId: string) {
 // ─── Jira Projects ────────────────────────────────────────────────────────────
 
 const DEFAULT_PROJECTS: InsertJiraProject[] = [
-  { key: "DGTK", name: "Dragon",     codename: "diamond",  color: "#f59e0b", sortOrder: 0 },
+  { key: "DGTK", name: "Dragon",     codename: "diamond",  color: "#f59e0b", sortOrder: 0, titleFilter: "Diamond,DImond,Dimond" },
   { key: "TPZ",  name: "SSG",        codename: "topaz",    color: "#10b981", sortOrder: 1 },
-  { key: "KITE", name: "Hypernova2", codename: "kitefin",  color: "#6366f1", sortOrder: 2 },
+  { key: "KITE", name: "Hypernova2", codename: "kitefin",  color: "#6366f1", sortOrder: 2, titleFilter: "kitefin,Kitefin,KITEFIN" },
 ];
 
 export async function seedDefaultProjects() {
@@ -103,7 +103,7 @@ export async function seedDefaultProjects() {
   for (const p of DEFAULT_PROJECTS) {
     await db.insert(jiraProjects)
       .values(p)
-      .onDuplicateKeyUpdate({ set: { name: p.name, codename: p.codename, color: p.color } });
+      .onDuplicateKeyUpdate({ set: { name: p.name, codename: p.codename, color: p.color, titleFilter: p.titleFilter ?? null } });
   }
 }
 

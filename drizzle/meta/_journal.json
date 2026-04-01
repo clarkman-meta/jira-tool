@@ -22,6 +22,13 @@
       "when": 1775016051607,
       "tag": "0002_square_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1775017512727,
+      "tag": "0003_fancy_jubilee",
+      "breakpoints": true
     }
   ]
 }

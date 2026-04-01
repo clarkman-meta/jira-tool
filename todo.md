@@ -44,3 +44,5 @@
 
 ## Bug Fixes
 - [x] Fix issue count discrepancy: implemented cursor-based pagination to fetch ALL pages (was only fetching first 100/200 issues)
+- [x] Investigate why unrelated issues (e.g. Leo) appear in DGTK results — codename embedded in title only
+- [x] Add titleFilter per-project keyword filter: server-side filtering by title keywords (comma-separated), configurable in Admin UI

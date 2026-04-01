@@ -1,0 +1,1 @@
+ALTER TABLE `jira_projects` ADD `titleFilter` varchar(512);

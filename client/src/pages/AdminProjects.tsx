@@ -20,6 +20,7 @@ interface ProjectFormData {
   codename: string;
   color: string;
   jiraBaseUrl: string;
+  titleFilter: string;
 }
 
 const EMPTY_FORM: ProjectFormData = {
@@ -28,6 +29,7 @@ const EMPTY_FORM: ProjectFormData = {
   codename: "",
   color: "#6366f1",
   jiraBaseUrl: "https://metarl.atlassian.net",
+  titleFilter: "",
 };
 
 export default function AdminProjects() {
@@ -76,12 +78,13 @@ export default function AdminProjects() {
       codename: form.codename || undefined,
       color: form.color,
       jiraBaseUrl: form.jiraBaseUrl || undefined,
+      titleFilter: form.titleFilter || undefined,
     });
   };
 
   const startEdit = (p: typeof projects[0]) => {
     setEditingId(p.id);
-    setEditForm({ name: p.name, codename: p.codename ?? "", color: p.color ?? "#6366f1", jiraBaseUrl: p.jiraBaseUrl ?? "" });
+    setEditForm({ name: p.name, codename: p.codename ?? "", color: p.color ?? "#6366f1", jiraBaseUrl: p.jiraBaseUrl ?? "", titleFilter: (p as { titleFilter?: string | null }).titleFilter ?? "" });
   };
 
   const handleUpdate = (id: number) => {
@@ -159,6 +162,16 @@ export default function AdminProjects() {
                         <Input className={inputCls} value={editForm.jiraBaseUrl ?? ""} onChange={(e) => setEditForm((f) => ({ ...f, jiraBaseUrl: e.target.value }))} />
                       </div>
                       <div className="space-y-1.5">
+                        <Label className={labelCls}>Title Filter Keywords</Label>
+                        <Input
+                          className={inputCls}
+                          value={(editForm as { titleFilter?: string }).titleFilter ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, titleFilter: e.target.value }))}
+                          placeholder="e.g. Diamond,DImond (comma-separated, leave blank to show all)"
+                        />
+                        <p className="text-xs text-muted-foreground/60">Only issues whose title contains one of these keywords will be shown. Leave blank to show all issues.</p>
+                      </div>
+                      <div className="space-y-1.5">
                         <Label className={labelCls}>Accent Color</Label>
                         <div className="flex items-center gap-2 flex-wrap">
                           {PRESET_COLORS.map((c) => (
@@ -200,6 +213,11 @@ export default function AdminProjects() {
                           <span className="text-xs font-mono text-muted-foreground">{project.key}</span>
                           {project.jiraBaseUrl && (
                             <span className="text-xs text-muted-foreground/60 truncate max-w-[200px]">{project.jiraBaseUrl}</span>
+                          )}
+                          {(project as { titleFilter?: string | null }).titleFilter && (
+                            <span className="text-xs text-amber-500/70 truncate max-w-[240px]" title="Title filter keywords">
+                              filter: {(project as { titleFilter?: string | null }).titleFilter}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -268,6 +286,16 @@ export default function AdminProjects() {
                   <input type="color" value={form.color} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent" />
                   <span className="text-xs text-muted-foreground ml-1">{form.color}</span>
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className={labelCls}>Title Filter Keywords</Label>
+                <Input
+                  className={inputCls}
+                  value={form.titleFilter}
+                  onChange={(e) => setForm((f) => ({ ...f, titleFilter: e.target.value }))}
+                  placeholder="e.g. Diamond,DImond (comma-separated, leave blank to show all)"
+                />
+                <p className="text-xs text-muted-foreground/60">Only issues whose title contains one of these keywords will be shown. Leave blank to show all issues.</p>
               </div>
               <div className="flex gap-2 pt-2">
                 <Button onClick={handleAdd} disabled={addMutation.isPending} className="gap-1.5 text-sm">

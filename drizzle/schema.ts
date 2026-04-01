@@ -35,6 +35,8 @@ export const jiraProjects = mysqlTable("jira_projects", {
   jiraBaseUrl: varchar("jiraBaseUrl", { length: 256 }).default("https://metarl.atlassian.net"),
   sortOrder: int("sortOrder").default(0),
   isActive: boolean("isActive").default(true).notNull(),
+  /** Comma-separated keywords; if set, only issues whose title contains at least one keyword are shown */
+  titleFilter: varchar("titleFilter", { length: 512 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

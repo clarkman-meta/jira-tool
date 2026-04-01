@@ -48,6 +48,7 @@ export const appRouter = router({
           color: z.string().max(32).optional(),
           jiraBaseUrl: z.string().optional(),
           sortOrder: z.number().int().optional(),
+          titleFilter: z.string().max(512).optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -58,6 +59,7 @@ export const appRouter = router({
           color: input.color ?? "#6366f1",
           jiraBaseUrl: input.jiraBaseUrl ?? "https://metarl.atlassian.net",
           sortOrder: input.sortOrder ?? 99,
+          titleFilter: input.titleFilter ?? null,
         });
         return { success: true };
       }),
@@ -72,6 +74,7 @@ export const appRouter = router({
           jiraBaseUrl: z.string().optional(),
           sortOrder: z.number().int().optional(),
           isActive: z.boolean().optional(),
+          titleFilter: z.string().max(512).nullable().optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -148,7 +151,28 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         try {
-          const issues = await fetchOpenIssues(input.projectKey, input.maxResults);
+          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults);
+
+          // Apply titleFilter: if the project has keywords configured, only keep
+          // issues whose summary contains at least one keyword (case-insensitive)
+          const projects = await listJiraProjects();
+          const project = projects.find((p) => p.key === input.projectKey);
+          const titleFilter = project?.titleFilter ?? null;
+
+          let issues = allIssues;
+          if (titleFilter) {
+            const keywords = titleFilter
+              .split(",")
+              .map((k) => k.trim().toLowerCase())
+              .filter(Boolean);
+            if (keywords.length > 0) {
+              issues = allIssues.filter((issue) => {
+                const title = issue.summary.toLowerCase();
+                return keywords.some((kw) => title.includes(kw));
+              });
+            }
+          }
+
           return { issues, error: null };
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : "Unknown error";
