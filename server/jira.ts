@@ -62,6 +62,7 @@ export interface JiraIssue {
   latestCommentDate: string | null;
   updated: string;
   priority: string | null;
+  build: string | null;  // customfield_10433 — used as priority in KITE
   issueType: string | null;
   url: string;
 }
@@ -74,7 +75,7 @@ export async function fetchOpenIssues(projectKey: string, maxResults = 100): Pro
   const response = await jiraClient.post("/rest/api/3/search/jql", {
     jql,
     maxResults,
-    fields: ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype"],
+    fields: ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433"],
   });
 
   const issues = response.data.issues as unknown[];
@@ -120,6 +121,10 @@ export async function fetchOpenIssues(projectKey: string, maxResults = 100): Pro
     const issueTypeObj = fields.issuetype as Record<string, unknown> | null;
     const issueType = (issueTypeObj?.name as string) ?? null;
 
+    // Build (customfield_10433) — used as priority substitute in KITE project
+    const buildObj = fields.customfield_10433 as Record<string, unknown> | null;
+    const build = (buildObj?.value as string) ?? null;
+
     // Reporter
     const reporterObj = fields.reporter as Record<string, unknown> | null;
     const reporterId = (reporterObj?.accountId as string) ?? null;
@@ -144,6 +149,7 @@ export async function fetchOpenIssues(projectKey: string, maxResults = 100): Pro
       latestCommentDate,
       updated: fields.updated as string,
       priority,
+      build,
       issueType,
       url: `${JIRA_BASE_URL}/browse/${issue.key}`,
     };

@@ -13,6 +13,7 @@ import {
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type SortField = "key" | "summary" | "status" | "assigneeName" | "reporterName" | "updated" | "priority";
+type SortConfig = { field: SortField; dir: SortDir };
 type SortDir = "asc" | "desc";
 
 // Stage filter presets — user can also type a custom keyword
@@ -35,6 +36,7 @@ interface JiraIssue {
   latestCommentDate: string | null;
   updated: string;
   priority: string | null;
+  build: string | null;
   issueType: string | null;
   url: string;
 }
@@ -224,23 +226,40 @@ function StageFilterBar({
 // ─── Issue Table ────────────────────────────────────────────────────────────────
 
 function IssueTable({
-  issues, loading, error, myAccountId, projectColor
+  issues, loading, error, myAccountId, projectColor, projectKey
 }: {
   issues: JiraIssue[];
   loading: boolean;
   error: string | null;
   myAccountId: string;
   projectColor: string;
+  projectKey: string;
 }) {
-  const [sortField, setSortField] = useState<SortField>("updated");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Default: priority asc first, updated desc as secondary
+  const [sorts, setSorts] = useState<SortConfig[]>([
+    { field: "priority", dir: "asc" },
+    { field: "updated", dir: "desc" },
+  ]);
+  const sortField = sorts[0]?.field ?? "priority";
+  const sortDir = sorts[0]?.dir ?? "asc";
   const [activePreset, setActivePreset] = useState<StagePreset>("All");
   const [customKeyword, setCustomKeyword] = useState("");
 
   const handleSort = (field: SortField) => {
-    if (field === sortField) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("desc"); }
+    setSorts(prev => {
+      const existing = prev.find(s => s.field === field);
+      if (existing) {
+        const newDir: SortDir = existing.dir === "asc" ? "desc" : "asc";
+        return [{ field, dir: newDir }, ...prev.filter(s => s.field !== field)];
+      }
+      return [{ field, dir: "desc" }, { field: "updated", dir: "desc" }];
+    });
   };
+
+  // For KITE, use build field as the effective priority
+  const isKite = projectKey === "KITE";
+  const getEffectivePriority = (issue: JiraIssue) =>
+    isKite ? (issue.build ?? issue.priority) : issue.priority;
 
   // Effective filter keyword: preset takes priority unless custom is set
   const effectiveKeyword = customKeyword !== "" ? customKeyword : (activePreset !== "All" ? activePreset : "");
@@ -251,24 +270,38 @@ function IssueTable({
   );
 
   const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) => {
-      if (sortField === "key") {
-        const numA = parseInt(a.key.replace(/\D/g, "")) || 0;
-        const numB = parseInt(b.key.replace(/\D/g, "")) || 0;
-        return sortDir === "asc" ? numA - numB : numB - numA;
+    const priorityOrder: Record<string, number> = {
+      p0: 0, highest: 0, blocker: 0,
+      p1: 1, high: 1,
+      p2: 2, medium: 2,
+      p3: 3, low: 3,
+      p4: 4, lowest: 4,
+    };
+    const compareOne = (a: JiraIssue, b: JiraIssue, s: SortConfig): number => {
+      if (s.field === "key") {
+        const na = parseInt(a.key.replace(/\D/g, "")) || 0;
+        const nb = parseInt(b.key.replace(/\D/g, "")) || 0;
+        return s.dir === "asc" ? na - nb : nb - na;
       }
-      if (sortField === "priority") {
-        const order: Record<string, number> = { p0: 0, highest: 0, blocker: 0, p1: 1, high: 1, p2: 2, medium: 2, p3: 3, low: 3, p4: 4, lowest: 4 };
-        const av = order[(a.priority ?? "").toLowerCase()] ?? 99;
-        const bv = order[(b.priority ?? "").toLowerCase()] ?? 99;
-        return sortDir === "asc" ? av - bv : bv - av;
+      if (s.field === "priority") {
+        const av = priorityOrder[(getEffectivePriority(a) ?? "").toLowerCase()] ?? 99;
+        const bv = priorityOrder[(getEffectivePriority(b) ?? "").toLowerCase()] ?? 99;
+        return s.dir === "asc" ? av - bv : bv - av;
       }
-      const av = (a[sortField as keyof JiraIssue] ?? "") as string;
-      const bv = (b[sortField as keyof JiraIssue] ?? "") as string;
+      const av = (a[s.field as keyof JiraIssue] ?? "") as string;
+      const bv = (b[s.field as keyof JiraIssue] ?? "") as string;
       const cmp = av.localeCompare(bv);
-      return sortDir === "asc" ? cmp : -cmp;
+      return s.dir === "asc" ? cmp : -cmp;
+    };
+    return [...filtered].sort((a, b) => {
+      for (const s of sorts) {
+        const cmp = compareOne(a, b, s);
+        if (cmp !== 0) return cmp;
+      }
+      return 0;
     });
-  }, [filtered, sortField, sortDir]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, sorts, isKite]);
 
   const tdCls = "px-4 py-3 text-sm";
 
@@ -327,7 +360,8 @@ function IssueTable({
             {sorted.map((issue) => {
               const isMe = issue.assigneeId === myAccountId;
               const statusStyle = getStatusStyle(issue.statusCategory, issue.status);
-              const priorityStyle = getPriorityStyle(issue.priority);
+              const effectivePriority = getEffectivePriority(issue);
+              const priorityStyle = getPriorityStyle(effectivePriority);
 
               return (
                 <tr
@@ -370,11 +404,11 @@ function IssueTable({
                     )}
                   </td>
 
-                  {/* Priority */}
+                  {/* Priority (Build for KITE) */}
                   <td className={tdCls}>
-                    {issue.priority ? (
+                    {effectivePriority ? (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ring-1 ${priorityStyle.bg} ${priorityStyle.text} ${priorityStyle.ring}`}>
-                        {issue.priority}
+                        {effectivePriority}
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground/40">—</span>
@@ -621,6 +655,7 @@ export default function Dashboard() {
             error={issueError}
             myAccountId={myAccountId}
             projectColor={activeProject?.color ?? "#6366f1"}
+            projectKey={activeKey}
           />
         </div>
 

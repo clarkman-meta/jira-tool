@@ -31,3 +31,5 @@
 - [ ] Update vitest tests for new fields
 - [x] Remove Build column from frontend table and backend jira.ts (not available in Dragon/SSG)
 - [x] Add stage filter bar (SMT / FATP / All) that filters issues by keyword match in title and latest comment
+- [x] For KITE project, show Build field (customfield_10433) in Priority column instead of standard priority
+- [x] Set default sort to priority (asc) then updated (desc) as secondary
