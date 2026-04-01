@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, jiraProjects, InsertJiraProject, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,51 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// ─── Jira Projects ────────────────────────────────────────────────────────────
+
+const DEFAULT_PROJECTS: InsertJiraProject[] = [
+  { key: "DGTK", name: "Dragon",     codename: "diamond",  color: "#f59e0b", sortOrder: 0 },
+  { key: "TPZ",  name: "SSG",        codename: "topaz",    color: "#10b981", sortOrder: 1 },
+  { key: "KITE", name: "Hypernova2", codename: "kitefin",  color: "#6366f1", sortOrder: 2 },
+];
+
+export async function seedDefaultProjects() {
+  const db = await getDb();
+  if (!db) return;
+  for (const p of DEFAULT_PROJECTS) {
+    await db.insert(jiraProjects)
+      .values(p)
+      .onDuplicateKeyUpdate({ set: { name: p.name, codename: p.codename, color: p.color } });
+  }
+}
+
+export async function listJiraProjects() {
+  const db = await getDb();
+  if (!db) return DEFAULT_PROJECTS.map((p, i) => ({ ...p, id: i + 1, isActive: true, jiraBaseUrl: "https://metarl.atlassian.net", createdAt: new Date(), updatedAt: new Date() }));
+  return db.select().from(jiraProjects).orderBy(jiraProjects.sortOrder);
+}
+
+export async function getJiraProjectByKey(key: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(jiraProjects).where(eq(jiraProjects.key, key)).limit(1);
+  return result[0];
+}
+
+export async function insertJiraProject(data: InsertJiraProject) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(jiraProjects).values(data);
+}
+
+export async function updateJiraProject(id: number, data: Partial<InsertJiraProject>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(jiraProjects).set(data).where(eq(jiraProjects.id, id));
+}
+
+export async function deleteJiraProject(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(jiraProjects).where(eq(jiraProjects.id, id));
+}

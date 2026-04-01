@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { boolean, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -25,4 +25,19 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+// Jira projects configuration table
+export const jiraProjects = mysqlTable("jira_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  key: varchar("key", { length: 32 }).notNull().unique(),
+  name: varchar("name", { length: 128 }).notNull(),
+  codename: varchar("codename", { length: 128 }),
+  color: varchar("color", { length: 32 }).default("#6366f1"),
+  jiraBaseUrl: varchar("jiraBaseUrl", { length: 256 }).default("https://metarl.atlassian.net"),
+  sortOrder: int("sortOrder").default(0),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type JiraProject = typeof jiraProjects.$inferSelect;
+export type InsertJiraProject = typeof jiraProjects.$inferInsert;
