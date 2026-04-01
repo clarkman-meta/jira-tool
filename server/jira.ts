@@ -70,7 +70,7 @@ export interface JiraIssue {
 // ─── Fetch open issues for a project ──────────────────────────────────────────
 
 export async function fetchOpenIssues(projectKey: string, maxResults = 100): Promise<JiraIssue[]> {
-  const jql = `project = ${projectKey} AND statusCategory != Done ORDER BY updated DESC`;
+  const jql = `project = ${projectKey} AND statusCategory != Done AND status != Closed ORDER BY updated DESC`;
 
   const response = await jiraClient.post("/rest/api/3/search/jql", {
     jql,
