@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, jiraProjects, InsertJiraProject, users } from "../drizzle/schema";
+import { InsertUser, jiraProjects, InsertJiraProject, users, watchedIssues, hiddenIssues } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -136,4 +136,48 @@ export async function deleteJiraProject(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(jiraProjects).where(eq(jiraProjects.id, id));
+}
+
+// ─── Watched Issues ───────────────────────────────────────────────────────────
+
+export async function listWatchedIssues() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(watchedIssues).orderBy(watchedIssues.createdAt);
+}
+
+export async function addWatchedIssue(issueKey: string, projectKey: string, note?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(watchedIssues)
+    .values({ issueKey: issueKey.toUpperCase(), projectKey: projectKey.toUpperCase(), note: note ?? null })
+    .onDuplicateKeyUpdate({ set: { projectKey: projectKey.toUpperCase(), note: note ?? null } });
+}
+
+export async function removeWatchedIssue(issueKey: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(watchedIssues).where(eq(watchedIssues.issueKey, issueKey.toUpperCase()));
+}
+
+// ─── Hidden Issues ────────────────────────────────────────────────────────────
+
+export async function listHiddenIssues() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(hiddenIssues).orderBy(hiddenIssues.createdAt);
+}
+
+export async function addHiddenIssue(issueKey: string, projectKey: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(hiddenIssues)
+    .values({ issueKey: issueKey.toUpperCase(), projectKey: projectKey.toUpperCase() })
+    .onDuplicateKeyUpdate({ set: { projectKey: projectKey.toUpperCase() } });
+}
+
+export async function removeHiddenIssue(issueKey: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(hiddenIssues).where(eq(hiddenIssues.issueKey, issueKey.toUpperCase()));
 }

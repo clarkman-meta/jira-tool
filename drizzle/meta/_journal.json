@@ -15,6 +15,13 @@
       "when": 1775013882542,
       "tag": "0001_sloppy_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775016051607,
+      "tag": "0002_square_omega_flight",
+      "breakpoints": true
     }
   ]
 }

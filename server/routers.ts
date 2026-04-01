@@ -9,6 +9,12 @@ import {
   listJiraProjects,
   seedDefaultProjects,
   updateJiraProject,
+  listWatchedIssues,
+  addWatchedIssue,
+  removeWatchedIssue,
+  listHiddenIssues,
+  addHiddenIssue,
+  removeHiddenIssue,
 } from "./db";
 import { fetchOpenIssues, validateJiraCredentials } from "./jira";
 
@@ -78,6 +84,55 @@ export const appRouter = router({
       .input(z.object({ id: z.number().int() }))
       .mutation(async ({ input }) => {
         await deleteJiraProject(input.id);
+        return { success: true };
+      }),
+  }),
+
+  // ─── Watch List ─────────────────────────────────────────────────────────────────────
+  watchlist: router({
+    list: publicProcedure.query(async () => {
+      return listWatchedIssues();
+    }),
+
+    add: publicProcedure
+      .input(z.object({
+        issueKey: z.string().min(1).max(32),
+        projectKey: z.string().min(1).max(32),
+        note: z.string().max(256).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        await addWatchedIssue(input.issueKey, input.projectKey, input.note);
+        return { success: true };
+      }),
+
+    remove: publicProcedure
+      .input(z.object({ issueKey: z.string().min(1).max(32) }))
+      .mutation(async ({ input }) => {
+        await removeWatchedIssue(input.issueKey);
+        return { success: true };
+      }),
+  }),
+
+  // ─── Hidden Issues ───────────────────────────────────────────────────────────────────
+  hidden: router({
+    list: publicProcedure.query(async () => {
+      return listHiddenIssues();
+    }),
+
+    add: publicProcedure
+      .input(z.object({
+        issueKey: z.string().min(1).max(32),
+        projectKey: z.string().min(1).max(32),
+      }))
+      .mutation(async ({ input }) => {
+        await addHiddenIssue(input.issueKey, input.projectKey);
+        return { success: true };
+      }),
+
+    remove: publicProcedure
+      .input(z.object({ issueKey: z.string().min(1).max(32) }))
+      .mutation(async ({ input }) => {
+        await removeHiddenIssue(input.issueKey);
         return { success: true };
       }),
   }),

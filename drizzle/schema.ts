@@ -41,3 +41,26 @@ export const jiraProjects = mysqlTable("jira_projects", {
 
 export type JiraProject = typeof jiraProjects.$inferSelect;
 export type InsertJiraProject = typeof jiraProjects.$inferInsert;
+
+// Issues the user explicitly wants to monitor (pinned to top of table)
+export const watchedIssues = mysqlTable("watched_issues", {
+  id: int("id").autoincrement().primaryKey(),
+  issueKey: varchar("issueKey", { length: 32 }).notNull().unique(),
+  projectKey: varchar("projectKey", { length: 32 }).notNull(),
+  note: varchar("note", { length: 256 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WatchedIssue = typeof watchedIssues.$inferSelect;
+export type InsertWatchedIssue = typeof watchedIssues.$inferInsert;
+
+// Issues the user wants to hide from the table
+export const hiddenIssues = mysqlTable("hidden_issues", {
+  id: int("id").autoincrement().primaryKey(),
+  issueKey: varchar("issueKey", { length: 32 }).notNull().unique(),
+  projectKey: varchar("projectKey", { length: 32 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type HiddenIssue = typeof hiddenIssues.$inferSelect;
+export type InsertHiddenIssue = typeof hiddenIssues.$inferInsert;

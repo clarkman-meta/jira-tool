@@ -7,7 +7,8 @@ import { toast } from "sonner";
 import {
   RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown,
   ExternalLink, Settings, Activity, AlertCircle, User,
-  Clock, Tag, Layers, Zap, Search, X
+  Clock, Tag, Layers, Zap, Search, X,
+  Star, EyeOff, Eye, Trash2, Plus, BookMarked
 } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -226,7 +227,7 @@ function StageFilterBar({
 // ─── Issue Table ────────────────────────────────────────────────────────────────
 
 function IssueTable({
-  issues, loading, error, myAccountId, projectColor, projectKey
+  issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys
 }: {
   issues: JiraIssue[];
   loading: boolean;
@@ -234,6 +235,7 @@ function IssueTable({
   myAccountId: string;
   projectColor: string;
   projectKey: string;
+  watchedKeys: Set<string>;
 }) {
   // Default: priority asc first, updated desc as secondary
   const [sorts, setSorts] = useState<SortConfig[]>([
@@ -359,6 +361,7 @@ function IssueTable({
             )}
             {sorted.map((issue) => {
               const isMe = issue.assigneeId === myAccountId;
+              const isWatched = watchedKeys.has(issue.key);
               const statusStyle = getStatusStyle(issue.statusCategory, issue.status);
               const effectivePriority = getEffectivePriority(issue);
               const priorityStyle = getPriorityStyle(effectivePriority);
@@ -367,17 +370,27 @@ function IssueTable({
                 <tr
                   key={issue.key}
                   className={`border-b border-border/30 transition-colors group cursor-pointer ${
-                    isMe
+                    isWatched
+                      ? "bg-sky-500/8 hover:bg-sky-500/12 border-l-2"
+                      : isMe
                       ? "bg-amber-500/8 hover:bg-amber-500/12 border-l-2"
                       : "hover:bg-muted/40"
                   }`}
-                  style={isMe ? { borderLeftColor: "oklch(0.72 0.18 60)" } : undefined}
+                  style={isWatched ? { borderLeftColor: "oklch(0.65 0.18 230)" } : isMe ? { borderLeftColor: "oklch(0.72 0.18 60)" } : undefined}
                   onClick={() => window.open(issue.url, "_blank")}
                 >
                   {/* Issue Key */}
                   <td className={`${tdCls} font-mono`}>
                     <div className="flex items-center gap-2">
-                      {isMe && (
+                      {isWatched && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Star className="w-3 h-3 text-sky-400 fill-sky-400 flex-shrink-0" />
+                          </TooltipTrigger>
+                          <TooltipContent>Watched issue</TooltipContent>
+                        </Tooltip>
+                      )}
+                      {!isWatched && isMe && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="inline-flex w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
@@ -471,6 +484,138 @@ function IssueTable({
   );
 }
 
+// ─── Watch List Panel ──────────────────────────────────────────────────────────
+
+function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
+  const utils = trpc.useUtils();
+  const [watchInput, setWatchInput] = useState("");
+  const [hideInput, setHideInput] = useState("");
+  const [tab, setTab] = useState<"watch" | "hide">("watch");
+
+  const { data: watchedData } = trpc.watchlist.list.useQuery();
+  const { data: hiddenData } = trpc.hidden.list.useQuery();
+
+  const addWatch = trpc.watchlist.add.useMutation({
+    onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Issue added to watch list"); setWatchInput(""); },
+    onError: (e) => toast.error(e.message),
+  });
+  const removeWatch = trpc.watchlist.remove.useMutation({
+    onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Removed from watch list"); },
+  });
+  const addHide = trpc.hidden.add.useMutation({
+    onSuccess: () => { utils.hidden.list.invalidate(); toast.success("Issue hidden"); setHideInput(""); },
+    onError: (e) => toast.error(e.message),
+  });
+  const removeHide = trpc.hidden.remove.useMutation({
+    onSuccess: () => { utils.hidden.list.invalidate(); toast.success("Issue unhidden"); },
+  });
+
+  const handleAddWatch = () => {
+    const key = watchInput.trim().toUpperCase();
+    if (!key) return;
+    // Infer project key from prefix (e.g. DGTK-123 → DGTK)
+    const inferredProject = key.includes("-") ? key.split("-")[0] : activeProjectKey;
+    addWatch.mutate({ issueKey: key, projectKey: inferredProject });
+  };
+
+  const handleAddHide = () => {
+    const key = hideInput.trim().toUpperCase();
+    if (!key) return;
+    const inferredProject = key.includes("-") ? key.split("-")[0] : activeProjectKey;
+    addHide.mutate({ issueKey: key, projectKey: inferredProject });
+  };
+
+  const watched = watchedData ?? [];
+  const hidden = hiddenData ?? [];
+
+  return (
+    <div className="border-t border-border/60 flex flex-col" style={{ background: "oklch(0.13 0.01 250)" }}>
+      {/* Tab header */}
+      <div className="flex items-center px-3 pt-3 pb-0 gap-1">
+        <button
+          onClick={() => setTab("watch")}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-t text-xs font-medium transition-colors ${
+            tab === "watch" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Star className="w-3 h-3" />
+          Watch
+          {watched.length > 0 && <span className="ml-0.5 bg-amber-500/20 text-amber-400 rounded-full px-1.5 py-0 text-[10px] font-bold">{watched.length}</span>}
+        </button>
+        <button
+          onClick={() => setTab("hide")}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-t text-xs font-medium transition-colors ${
+            tab === "hide" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <EyeOff className="w-3 h-3" />
+          Hidden
+          {hidden.length > 0 && <span className="ml-0.5 bg-red-500/20 text-red-400 rounded-full px-1.5 py-0 text-[10px] font-bold">{hidden.length}</span>}
+        </button>
+      </div>
+
+      <div className="px-3 pb-3 bg-muted/30 rounded-b">
+        {/* Input row */}
+        <div className="flex gap-1.5 mt-2 mb-2">
+          <input
+            type="text"
+            value={tab === "watch" ? watchInput : hideInput}
+            onChange={(e) => tab === "watch" ? setWatchInput(e.target.value) : setHideInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") tab === "watch" ? handleAddWatch() : handleAddHide(); }}
+            placeholder={tab === "watch" ? "e.g. DGTK-123" : "e.g. DGTK-456"}
+            className="flex-1 px-2.5 py-1.5 text-xs rounded bg-background border border-border/60 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          <button
+            onClick={tab === "watch" ? handleAddWatch : handleAddHide}
+            disabled={tab === "watch" ? addWatch.isPending : addHide.isPending}
+            className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+              tab === "watch"
+                ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"
+                : "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+            }`}
+          >
+            <Plus className="w-3 h-3" />
+            Add
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="space-y-1 max-h-36 overflow-y-auto">
+          {tab === "watch" && watched.length === 0 && (
+            <p className="text-xs text-muted-foreground/50 text-center py-2">No watched issues</p>
+          )}
+          {tab === "hide" && hidden.length === 0 && (
+            <p className="text-xs text-muted-foreground/50 text-center py-2">No hidden issues</p>
+          )}
+          {tab === "watch" && watched.map((w) => (
+            <div key={w.issueKey} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-amber-500/8 border border-amber-500/20">
+              <span className="text-xs font-mono text-amber-300 font-semibold">{w.issueKey}</span>
+              <button
+                onClick={() => removeWatch.mutate({ issueKey: w.issueKey })}
+                className="text-muted-foreground hover:text-red-400 transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+          {tab === "hide" && hidden.map((h) => (
+            <div key={h.issueKey} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-red-500/8 border border-red-500/20">
+              <span className="text-xs font-mono text-red-300 font-semibold">{h.issueKey}</span>
+              <button
+                onClick={() => removeHide.mutate({ issueKey: h.issueKey })}
+                className="text-muted-foreground hover:text-emerald-400 transition-colors"
+                title="Unhide"
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard Page ─────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -514,8 +659,22 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [autoRefresh, handleRefresh]);
 
-  const issues = issueData?.issues ?? [];
+  const { data: watchedData } = trpc.watchlist.list.useQuery();
+  const { data: hiddenData } = trpc.hidden.list.useQuery();
+  const watchedKeys = useMemo(() => new Set((watchedData ?? []).map((w) => w.issueKey)), [watchedData]);
+  const hiddenKeys = useMemo(() => new Set((hiddenData ?? []).map((h) => h.issueKey)), [hiddenData]);
+
+  const rawIssues = issueData?.issues ?? [];
   const issueError = issueData?.error ?? null;
+
+  // Apply hidden filter and pin watched issues to the top
+  const issues = useMemo(() => {
+    const visible = rawIssues.filter((i) => !hiddenKeys.has(i.key));
+    const watched = visible.filter((i) => watchedKeys.has(i.key));
+    const rest = visible.filter((i) => !watchedKeys.has(i.key));
+    return [...watched, ...rest];
+  }, [rawIssues, watchedKeys, hiddenKeys]);
+
   const myIssueCount = issues.filter((i) => i.assigneeId === myAccountId).length;
 
   return (
@@ -564,6 +723,10 @@ export default function Dashboard() {
             );
           })}
         </nav>
+
+        <div className="border-t border-border/60">
+          <WatchListPanel activeProjectKey={activeKey} />
+        </div>
 
         <div className="px-3 py-3 border-t border-border/60">
           <button
@@ -656,6 +819,7 @@ export default function Dashboard() {
             myAccountId={myAccountId}
             projectColor={activeProject?.color ?? "#6366f1"}
             projectKey={activeKey}
+            watchedKeys={watchedKeys}
           />
         </div>
 

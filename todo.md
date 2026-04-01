@@ -34,3 +34,10 @@
 - [x] For KITE project, show Build field (customfield_10433) in Priority column instead of standard priority
 - [x] Set default sort to priority (asc) then updated (desc) as secondary
 - [x] Exclude issues with status "Closed" from JQL query
+
+## Watch List Feature
+- [x] Add watched_issues and hidden_issues tables to DB schema
+- [x] Add tRPC routes: list/add/remove watched issues, list/add/remove hidden issues
+- [x] In issue table: pin watched issues to top with a star indicator, filter out hidden issues
+- [x] Add Watch List management panel (sidebar or modal): input to add issue key, list to remove
+- [x] Watched issues pinned to top of table (already in open issues list)
