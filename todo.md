@@ -46,3 +46,7 @@
 - [x] Fix issue count discrepancy: implemented cursor-based pagination to fetch ALL pages (was only fetching first 100/200 issues)
 - [x] Investigate why unrelated issues (e.g. Leo) appear in DGTK results — codename embedded in title only
 - [x] Add titleFilter per-project keyword filter: server-side filtering by title keywords (comma-separated), configurable in Admin UI
+
+## Round 4
+- [x] Fetch real JQL filter from Diamond board (DGTK-234 board) and Hypernova2 dashboard (29923) and apply as titleFilter
+- [x] Build Pinned Issues feature: add issue key → fetch from Jira → pin to top with special highlight + delete icon (PinnedIssuesMerger component, shows even if not in open list)

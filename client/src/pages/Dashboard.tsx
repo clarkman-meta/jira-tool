@@ -484,6 +484,69 @@ function IssueTable({
   );
 }
 
+// ─── PinnedIssuesMerger: fetches all pinned issues and reports them up ───────────
+// This component exists to legally call hooks per watched key without violating rules-of-hooks.
+
+function SinglePinnedFetcher({ issueKey, onFetched }: { issueKey: string; onFetched: (issue: JiraIssue | null) => void }) {
+  const { data } = trpc.jira.issue.useQuery({ issueKey }, { staleTime: 60_000 });
+  useEffect(() => {
+    onFetched(data?.issue ?? null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.issue?.key, data?.issue?.updated]);
+  return null;
+}
+
+function PinnedIssuesMerger({ watchedKeys, onUpdate }: { watchedKeys: string[]; onUpdate: (issues: JiraIssue[]) => void }) {
+  const [map, setMap] = useState<Record<string, JiraIssue>>({});
+  const handleFetched = useCallback((key: string, issue: JiraIssue | null) => {
+    setMap((prev) => {
+      if (!issue) {
+        if (key in prev) { const next = { ...prev }; delete next[key]; return next; }
+        return prev;
+      }
+      if (prev[key]?.updated === issue.updated) return prev;
+      return { ...prev, [key]: issue };
+    });
+  }, []);
+  useEffect(() => {
+    onUpdate(watchedKeys.map((k) => map[k]).filter((i): i is JiraIssue => !!i));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, watchedKeys.join(",")]);
+  return (
+    <>
+      {watchedKeys.map((key) => (
+        <SinglePinnedFetcher key={key} issueKey={key} onFetched={(i) => handleFetched(key, i)} />
+      ))}
+    </>
+  );
+}
+
+// ─── PinnedIssueRow: fetches a single issue live from Jira ─────────────────────
+
+function PinnedIssueRow({ issueKey, onRemove }: { issueKey: string; onRemove: () => void }) {
+  const { data, isLoading, isError } = trpc.jira.issue.useQuery({ issueKey }, { staleTime: 60_000 });
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-sky-500/10 border border-sky-500/20">
+      <div className="flex items-center gap-2 min-w-0">
+        <Star className="w-3 h-3 text-sky-400 fill-sky-400 flex-shrink-0" />
+        <div className="min-w-0">
+          <span className="text-xs font-mono text-sky-300 font-semibold">{issueKey}</span>
+          {isLoading && <span className="ml-1.5 text-[10px] text-muted-foreground/50 animate-pulse">loading…</span>}
+          {isError && <span className="ml-1.5 text-[10px] text-red-400">not found</span>}
+          {data?.issue && (
+            <p className="text-[10px] text-muted-foreground/70 truncate max-w-[130px] mt-0.5 leading-tight">
+              {data.issue.summary}
+            </p>
+          )}
+        </div>
+      </div>
+      <button onClick={onRemove} className="text-muted-foreground hover:text-red-400 transition-colors flex-shrink-0">
+        <Trash2 className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
 // ─── Watch List Panel ──────────────────────────────────────────────────────────
 
 function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
@@ -496,11 +559,11 @@ function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
   const { data: hiddenData } = trpc.hidden.list.useQuery();
 
   const addWatch = trpc.watchlist.add.useMutation({
-    onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Issue added to watch list"); setWatchInput(""); },
+    onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Issue pinned to watch list"); setWatchInput(""); },
     onError: (e) => toast.error(e.message),
   });
   const removeWatch = trpc.watchlist.remove.useMutation({
-    onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Removed from watch list"); },
+    onSuccess: () => { utils.watchlist.list.invalidate(); utils.jira.issue.invalidate(); toast.success("Removed from watch list"); },
   });
   const addHide = trpc.hidden.add.useMutation({
     onSuccess: () => { utils.hidden.list.invalidate(); toast.success("Issue hidden"); setHideInput(""); },
@@ -513,7 +576,6 @@ function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
   const handleAddWatch = () => {
     const key = watchInput.trim().toUpperCase();
     if (!key) return;
-    // Infer project key from prefix (e.g. DGTK-123 → DGTK)
     const inferredProject = key.includes("-") ? key.split("-")[0] : activeProjectKey;
     addWatch.mutate({ issueKey: key, projectKey: inferredProject });
   };
@@ -539,8 +601,8 @@ function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
           }`}
         >
           <Star className="w-3 h-3" />
-          Watch
-          {watched.length > 0 && <span className="ml-0.5 bg-amber-500/20 text-amber-400 rounded-full px-1.5 py-0 text-[10px] font-bold">{watched.length}</span>}
+          Pinned
+          {watched.length > 0 && <span className="ml-0.5 bg-sky-500/20 text-sky-400 rounded-full px-1.5 py-0 text-[10px] font-bold">{watched.length}</span>}
         </button>
         <button
           onClick={() => setTab("hide")}
@@ -562,7 +624,7 @@ function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
             value={tab === "watch" ? watchInput : hideInput}
             onChange={(e) => tab === "watch" ? setWatchInput(e.target.value) : setHideInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") tab === "watch" ? handleAddWatch() : handleAddHide(); }}
-            placeholder={tab === "watch" ? "e.g. DGTK-123" : "e.g. DGTK-456"}
+            placeholder={tab === "watch" ? "Pin issue, e.g. DGTK-123" : "Hide issue, e.g. DGTK-456"}
             className="flex-1 px-2.5 py-1.5 text-xs rounded bg-background border border-border/60 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
           />
           <button
@@ -570,7 +632,7 @@ function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
             disabled={tab === "watch" ? addWatch.isPending : addHide.isPending}
             className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
               tab === "watch"
-                ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"
+                ? "bg-sky-500/20 text-sky-400 hover:bg-sky-500/30"
                 : "bg-red-500/20 text-red-400 hover:bg-red-500/30"
             }`}
           >
@@ -580,23 +642,19 @@ function WatchListPanel({ activeProjectKey }: { activeProjectKey: string }) {
         </div>
 
         {/* List */}
-        <div className="space-y-1 max-h-36 overflow-y-auto">
+        <div className="space-y-1 max-h-40 overflow-y-auto">
           {tab === "watch" && watched.length === 0 && (
-            <p className="text-xs text-muted-foreground/50 text-center py-2">No watched issues</p>
+            <p className="text-xs text-muted-foreground/50 text-center py-2">No pinned issues</p>
           )}
           {tab === "hide" && hidden.length === 0 && (
             <p className="text-xs text-muted-foreground/50 text-center py-2">No hidden issues</p>
           )}
           {tab === "watch" && watched.map((w) => (
-            <div key={w.issueKey} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-amber-500/8 border border-amber-500/20">
-              <span className="text-xs font-mono text-amber-300 font-semibold">{w.issueKey}</span>
-              <button
-                onClick={() => removeWatch.mutate({ issueKey: w.issueKey })}
-                className="text-muted-foreground hover:text-red-400 transition-colors"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
+            <PinnedIssueRow
+              key={w.issueKey}
+              issueKey={w.issueKey}
+              onRemove={() => removeWatch.mutate({ issueKey: w.issueKey })}
+            />
           ))}
           {tab === "hide" && hidden.map((h) => (
             <div key={h.issueKey} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-red-500/8 border border-red-500/20">
@@ -667,18 +725,28 @@ export default function Dashboard() {
   const rawIssues = issueData?.issues ?? [];
   const issueError = issueData?.error ?? null;
 
-  // Apply hidden filter and pin watched issues to the top
+  // pinnedIssues state is populated by PinnedIssuesMerger child component
+  const [pinnedIssues, setPinnedIssues] = useState<JiraIssue[]>([]);
+
+  // Merge pinned issues into the list: pinned first (even if not in open list), then rest minus hidden
   const issues = useMemo(() => {
+    const rawKeysInList = new Set(rawIssues.map((i) => i.key));
+    const extraPinned = pinnedIssues.filter((i) => !rawKeysInList.has(i.key) && !hiddenKeys.has(i.key));
     const visible = rawIssues.filter((i) => !hiddenKeys.has(i.key));
-    const watched = visible.filter((i) => watchedKeys.has(i.key));
+    const watchedInList = visible.filter((i) => watchedKeys.has(i.key));
     const rest = visible.filter((i) => !watchedKeys.has(i.key));
-    return [...watched, ...rest];
-  }, [rawIssues, watchedKeys, hiddenKeys]);
+    return [...extraPinned, ...watchedInList, ...rest];
+  }, [rawIssues, pinnedIssues, watchedKeys, hiddenKeys]);
 
   const myIssueCount = issues.filter((i) => i.assigneeId === myAccountId).length;
 
   return (
     <div className="min-h-screen bg-background flex">
+      {/* Invisible component that fetches pinned issues and merges them into the table */}
+      <PinnedIssuesMerger
+        watchedKeys={Array.from(watchedKeys)}
+        onUpdate={setPinnedIssues}
+      />
       {/* ── Sidebar ── */}
       <aside className="w-64 flex-shrink-0 border-r border-border/60 flex flex-col"
         style={{ background: "oklch(0.14 0.012 250)" }}>

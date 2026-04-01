@@ -16,7 +16,7 @@ import {
   addHiddenIssue,
   removeHiddenIssue,
 } from "./db";
-import { fetchOpenIssues, validateJiraCredentials } from "./jira";
+import { fetchOpenIssues, fetchSingleIssue, validateJiraCredentials } from "./jira";
 
 // Seed default projects on startup
 seedDefaultProjects().catch((e) => console.warn("[DB] Seed failed:", e));
@@ -151,14 +151,16 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         try {
-          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults);
-
-          // Apply titleFilter: if the project has keywords configured, only keep
-          // issues whose summary contains at least one keyword (case-insensitive)
+          // Fetch project config to get filters
           const projects = await listJiraProjects();
           const project = projects.find((p) => p.key === input.projectKey);
           const titleFilter = project?.titleFilter ?? null;
+          const issueTypeFilter = (project as { issueTypeFilter?: string | null } | undefined)?.issueTypeFilter ?? null;
 
+          // Pass issueTypeFilter to JQL for server-side filtering
+          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter);
+
+          // Apply titleFilter: client-side keyword filter on summary
           let issues = allIssues;
           if (titleFilter) {
             const keywords = titleFilter
@@ -178,6 +180,19 @@ export const appRouter = router({
           const message = err instanceof Error ? err.message : "Unknown error";
           console.error(`[Jira] Failed to fetch issues for ${input.projectKey}:`, message);
           return { issues: [], error: message };
+        }
+      }),
+
+    // Fetch a single issue by key (for pinned issues feature)
+    issue: publicProcedure
+      .input(z.object({ issueKey: z.string().min(1).max(32) }))
+      .query(async ({ input }) => {
+        try {
+          const issue = await fetchSingleIssue(input.issueKey);
+          return { issue, error: null };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          return { issue: null, error: message };
         }
       }),
 

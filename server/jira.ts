@@ -145,8 +145,20 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
 
 // ─── Fetch ALL open issues for a project (cursor-based pagination) ────────────
 
-export async function fetchOpenIssues(projectKey: string, _maxResults = 100): Promise<JiraIssue[]> {
-  const jql = `project = ${projectKey} AND statusCategory != Done AND status != Closed ORDER BY updated DESC`;
+export async function fetchOpenIssues(
+  projectKey: string,
+  _maxResults = 100,
+  issueTypeFilter?: string | null,
+): Promise<JiraIssue[]> {
+  let jql = `project = ${projectKey} AND statusCategory != Done AND status != Closed`;
+  if (issueTypeFilter) {
+    const types = issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
+    if (types.length > 0) {
+      const typeList = types.map((t) => `"${t}"`).join(", ");
+      jql += ` AND issuetype IN (${typeList})`;
+    }
+  }
+  jql += " ORDER BY updated DESC";
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50; // safety cap: 50 × 100 = 5000 issues max
   const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433"];
@@ -171,6 +183,14 @@ export async function fetchOpenIssues(projectKey: string, _maxResults = 100): Pr
   } while (nextPageToken && pageCount < MAX_PAGES);
 
   return allIssues;
+}
+
+// ─── Fetch a single issue by key ─────────────────────────────────────────────
+
+export async function fetchSingleIssue(issueKey: string): Promise<JiraIssue> {
+  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433"];
+  const response = await jiraClient.get(`/rest/api/3/issue/${issueKey}`, { params: { fields: fields.join(",") } });
+  return mapIssue(response.data, JIRA_BASE_URL);
 }
 
 // ─── Validate credentials ──────────────────────────────────────────────────────
