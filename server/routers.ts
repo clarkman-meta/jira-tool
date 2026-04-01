@@ -49,6 +49,7 @@ export const appRouter = router({
           jiraBaseUrl: z.string().optional(),
           sortOrder: z.number().int().optional(),
           titleFilter: z.string().max(512).optional(),
+          customJql: z.string().optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -60,6 +61,7 @@ export const appRouter = router({
           jiraBaseUrl: input.jiraBaseUrl ?? "https://metarl.atlassian.net",
           sortOrder: input.sortOrder ?? 99,
           titleFilter: input.titleFilter ?? null,
+          customJql: input.customJql ?? null,
         });
         return { success: true };
       }),
@@ -75,6 +77,7 @@ export const appRouter = router({
           sortOrder: z.number().int().optional(),
           isActive: z.boolean().optional(),
           titleFilter: z.string().max(512).nullable().optional(),
+          customJql: z.string().nullable().optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -156,13 +159,14 @@ export const appRouter = router({
           const project = projects.find((p) => p.key === input.projectKey);
           const titleFilter = project?.titleFilter ?? null;
           const issueTypeFilter = (project as { issueTypeFilter?: string | null } | undefined)?.issueTypeFilter ?? null;
+          const customJql = (project as { customJql?: string | null } | undefined)?.customJql ?? null;
 
-          // Pass issueTypeFilter to JQL for server-side filtering
-          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter);
+          // Pass customJql (or issueTypeFilter) to JQL for server-side filtering
+          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql);
 
-          // Apply titleFilter: client-side keyword filter on summary
+          // Apply titleFilter only when no customJql is set
           let issues = allIssues;
-          if (titleFilter) {
+          if (!customJql && titleFilter) {
             const keywords = titleFilter
               .split(",")
               .map((k) => k.trim().toLowerCase())

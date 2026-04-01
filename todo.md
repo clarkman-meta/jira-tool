@@ -54,3 +54,14 @@
 ## UX Improvements (Round 5)
 - [x] Move Pin/Hide input controls from sidebar bottom into the filter bar area above the table
 - [x] Add per-row hide (×) delete button as the last column in the issue table
+
+## Round 6 - Filter by Dashboard JQL
+- [x] Fetch JQL from Jira dashboard 31186 (gadget 105884) — found parent=DGTK-234 pattern
+
+## Round 6 - Per-Project Custom JQL
+- [x] Add customJql column to jira_projects DB table
+- [x] Update backend jira.ts to use customJql when present (override default JQL)
+- [x] Seed Dragon: parent = DGTK-234 AND statusCategory != Done AND status != Closed
+- [x] Seed Hypernova2: project = KITE AND "Build[Dropdown]" IN (P0,P1) AND status NOT IN (Closed, Done)
+- [x] Seed SSG (TPZ): project = TPZ AND summary ~ "[P2]" AND statusCategory != Done AND status != Closed
+- [x] Update Admin UI to show/edit customJql field per project (textarea with full JQL editing)

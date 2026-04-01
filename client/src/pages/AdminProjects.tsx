@@ -21,6 +21,7 @@ interface ProjectFormData {
   color: string;
   jiraBaseUrl: string;
   titleFilter: string;
+  customJql: string;
 }
 
 const EMPTY_FORM: ProjectFormData = {
@@ -30,6 +31,7 @@ const EMPTY_FORM: ProjectFormData = {
   color: "#6366f1",
   jiraBaseUrl: "https://metarl.atlassian.net",
   titleFilter: "",
+  customJql: "",
 };
 
 export default function AdminProjects() {
@@ -79,12 +81,20 @@ export default function AdminProjects() {
       color: form.color,
       jiraBaseUrl: form.jiraBaseUrl || undefined,
       titleFilter: form.titleFilter || undefined,
+      customJql: form.customJql || undefined,
     });
   };
 
   const startEdit = (p: typeof projects[0]) => {
     setEditingId(p.id);
-    setEditForm({ name: p.name, codename: p.codename ?? "", color: p.color ?? "#6366f1", jiraBaseUrl: p.jiraBaseUrl ?? "", titleFilter: (p as { titleFilter?: string | null }).titleFilter ?? "" });
+    setEditForm({
+      name: p.name,
+      codename: p.codename ?? "",
+      color: p.color ?? "#6366f1",
+      jiraBaseUrl: p.jiraBaseUrl ?? "",
+      titleFilter: (p as { titleFilter?: string | null }).titleFilter ?? "",
+      customJql: (p as { customJql?: string | null }).customJql ?? "",
+    });
   };
 
   const handleUpdate = (id: number) => {
@@ -162,14 +172,23 @@ export default function AdminProjects() {
                         <Input className={inputCls} value={editForm.jiraBaseUrl ?? ""} onChange={(e) => setEditForm((f) => ({ ...f, jiraBaseUrl: e.target.value }))} />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className={labelCls}>Title Filter Keywords</Label>
+                        <Label className={labelCls}>Custom JQL Override</Label>
+                        <textarea
+                          className="w-full bg-input border border-border text-foreground placeholder:text-muted-foreground text-sm rounded-md px-3 py-2 min-h-[72px] resize-y"
+                          value={(editForm as { customJql?: string }).customJql ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, customJql: e.target.value }))}
+                          placeholder="e.g. project = DGTK AND parent = DGTK-234 AND statusCategory != Done ORDER BY updated DESC"
+                        />
+                        <p className="text-xs text-muted-foreground/60">If set, this JQL completely replaces the default query. Leave blank to use the default open-issues query.</p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className={labelCls}>Title Filter Keywords <span className="text-muted-foreground/50">(fallback, used only when no Custom JQL)</span></Label>
                         <Input
                           className={inputCls}
                           value={(editForm as { titleFilter?: string }).titleFilter ?? ""}
                           onChange={(e) => setEditForm((f) => ({ ...f, titleFilter: e.target.value }))}
-                          placeholder="e.g. Diamond,DImond (comma-separated, leave blank to show all)"
+                          placeholder="e.g. Diamond,DImond (comma-separated)"
                         />
-                        <p className="text-xs text-muted-foreground/60">Only issues whose title contains one of these keywords will be shown. Leave blank to show all issues.</p>
                       </div>
                       <div className="space-y-1.5">
                         <Label className={labelCls}>Accent Color</Label>
@@ -214,11 +233,15 @@ export default function AdminProjects() {
                           {project.jiraBaseUrl && (
                             <span className="text-xs text-muted-foreground/60 truncate max-w-[200px]">{project.jiraBaseUrl}</span>
                           )}
-                          {(project as { titleFilter?: string | null }).titleFilter && (
+                          {(project as { customJql?: string | null }).customJql ? (
+                            <span className="text-xs text-blue-400/70 truncate max-w-[320px]" title={(project as { customJql?: string | null }).customJql ?? ""}>
+                              JQL: {((project as { customJql?: string | null }).customJql ?? "").substring(0, 60)}…
+                            </span>
+                          ) : (project as { titleFilter?: string | null }).titleFilter ? (
                             <span className="text-xs text-amber-500/70 truncate max-w-[240px]" title="Title filter keywords">
                               filter: {(project as { titleFilter?: string | null }).titleFilter}
                             </span>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -288,14 +311,23 @@ export default function AdminProjects() {
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label className={labelCls}>Title Filter Keywords</Label>
+                <Label className={labelCls}>Custom JQL Override</Label>
+                <textarea
+                  className="w-full bg-input border border-border text-foreground placeholder:text-muted-foreground text-sm rounded-md px-3 py-2 min-h-[72px] resize-y"
+                  value={form.customJql}
+                  onChange={(e) => setForm((f) => ({ ...f, customJql: e.target.value }))}
+                  placeholder="e.g. project = MYKEY AND parent = MYKEY-1 AND statusCategory != Done ORDER BY updated DESC"
+                />
+                <p className="text-xs text-muted-foreground/60">If set, this JQL completely replaces the default query. Leave blank to use the default open-issues query.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className={labelCls}>Title Filter Keywords <span className="text-muted-foreground/50">(fallback)</span></Label>
                 <Input
                   className={inputCls}
                   value={form.titleFilter}
                   onChange={(e) => setForm((f) => ({ ...f, titleFilter: e.target.value }))}
                   placeholder="e.g. Diamond,DImond (comma-separated, leave blank to show all)"
                 />
-                <p className="text-xs text-muted-foreground/60">Only issues whose title contains one of these keywords will be shown. Leave blank to show all issues.</p>
               </div>
               <div className="flex gap-2 pt-2">
                 <Button onClick={handleAdd} disabled={addMutation.isPending} className="gap-1.5 text-sm">

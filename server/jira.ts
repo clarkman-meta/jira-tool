@@ -149,16 +149,23 @@ export async function fetchOpenIssues(
   projectKey: string,
   _maxResults = 100,
   issueTypeFilter?: string | null,
+  customJql?: string | null,
 ): Promise<JiraIssue[]> {
-  let jql = `project = ${projectKey} AND statusCategory != Done AND status != Closed`;
-  if (issueTypeFilter) {
-    const types = issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
-    if (types.length > 0) {
-      const typeList = types.map((t) => `"${t}"`).join(", ");
-      jql += ` AND issuetype IN (${typeList})`;
+  let jql: string;
+  if (customJql && customJql.trim()) {
+    // Use the fully custom JQL as-is
+    jql = customJql.trim();
+  } else {
+    jql = `project = ${projectKey} AND statusCategory != Done AND status != Closed`;
+    if (issueTypeFilter) {
+      const types = issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
+      if (types.length > 0) {
+        const typeList = types.map((t) => `"${t}"`).join(", ");
+        jql += ` AND issuetype IN (${typeList})`;
+      }
     }
+    jql += " ORDER BY updated DESC";
   }
-  jql += " ORDER BY updated DESC";
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50; // safety cap: 50 × 100 = 5000 issues max
   const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433"];

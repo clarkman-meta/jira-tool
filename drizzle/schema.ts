@@ -39,6 +39,8 @@ export const jiraProjects = mysqlTable("jira_projects", {
   titleFilter: varchar("titleFilter", { length: 512 }),
   /** Comma-separated Jira issue types to include in JQL, e.g. "Bug,FA". If null, all types are fetched. */
   issueTypeFilter: varchar("issueTypeFilter", { length: 256 }),
+  /** Fully custom JQL override. If set, replaces the default project-based JQL entirely. */
+  customJql: text("customJql"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
