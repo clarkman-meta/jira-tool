@@ -68,3 +68,13 @@
 
 ## Round 7 - My Issues Toggle
 - [x] Add "My Issues" toggle button in the filter bar to filter issues assigned to Clark Hsu
+
+## Round 8 - Enhanced My Issues
+- [ ] Investigate Jira JQL support for watcher, commenter, reporter involvement
+- [ ] Enhance My Issues: include issues where I am assignee, reporter, commenter, watcher/subscriber, or task owner
+- [ ] Also include Task issue type in the filter (not just Bug/FA for Dragon)
+
+## Round 9 - Default My Issues + Time Filter
+- [x] Set My Issues toggle to ON by default (click to show all issues)
+- [x] Add flexible time filter: quick preset chips (7d/14d/30d/90d) + free-input days field, default 30 days
+- [x] Time filter applies to updatedDate field client-side (issues with updated > now - N days)

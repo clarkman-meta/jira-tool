@@ -252,7 +252,9 @@ function IssueTable({
   const [customKeyword, setCustomKeyword] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [pinOpen, setPinOpen] = useState(false);
-  const [myIssuesOnly, setMyIssuesOnly] = useState(false);
+  const [myIssuesOnly, setMyIssuesOnly] = useState(true);
+  const [daysFilter, setDaysFilter] = useState<number>(30);
+  const [daysInput, setDaysInput] = useState("30");
 
   const handleSort = (field: SortField) => {
     setSorts(prev => {
@@ -273,11 +275,22 @@ function IssueTable({
   // Effective filter keyword: preset takes priority unless custom is set
   const effectiveKeyword = customKeyword !== "" ? customKeyword : (activePreset !== "All" ? activePreset : "");
 
+  const cutoffDate = useMemo(() => {
+    if (daysFilter <= 0) return null;
+    const d = new Date();
+    d.setDate(d.getDate() - daysFilter);
+    return d;
+  }, [daysFilter]);
+
   const filtered = useMemo(() =>
     issues
       .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
-      .filter((i) => !myIssuesOnly || i.assigneeId === myAccountId),
-    [issues, effectiveKeyword, myIssuesOnly, myAccountId]
+      .filter((i) => !myIssuesOnly || i.assigneeId === myAccountId)
+      .filter((i) => {
+        if (!cutoffDate) return true;
+        return new Date(i.updated) >= cutoffDate;
+      }),
+    [issues, effectiveKeyword, myIssuesOnly, myAccountId, cutoffDate]
   );
 
   const sorted = useMemo(() => {
@@ -327,7 +340,7 @@ function IssueTable({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Filter Bar */}
+      {/* Filter Bar — Row 1: stage chips + keyword + My Issues + Pin */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 flex-wrap"
         style={{ background: "oklch(0.145 0.011 250)" }}>
         <StageFilterBar
@@ -360,6 +373,66 @@ function IssueTable({
           </TooltipTrigger>
           <TooltipContent>{myIssuesOnly ? "Showing only your issues — click to show all" : "Show only issues assigned to you"}</TooltipContent>
         </Tooltip>
+      </div>
+
+      {/* Filter Bar — Row 2: time filter */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border/30 flex-wrap"
+        style={{ background: "oklch(0.138 0.010 250)" }}>
+        <Clock className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+        <span className="text-xs text-muted-foreground flex-shrink-0">Updated in last</span>
+        {/* Quick preset chips */}
+        {[7, 14, 30, 90].map((d) => (
+          <button
+            key={d}
+            onClick={() => { setDaysFilter(d); setDaysInput(String(d)); }}
+            className={`px-2 py-0.5 rounded text-xs font-medium transition-all flex-shrink-0 ${
+              daysFilter === d && daysFilter > 0
+                ? "bg-primary/80 text-primary-foreground"
+                : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {d}d
+          </button>
+        ))}
+        {/* Free-input days */}
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            min="1"
+            max="9999"
+            value={daysInput}
+            onChange={(e) => setDaysInput(e.target.value)}
+            onBlur={() => {
+              const n = parseInt(daysInput);
+              if (!isNaN(n) && n > 0) setDaysFilter(n);
+              else { setDaysInput(String(daysFilter)); }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const n = parseInt(daysInput);
+                if (!isNaN(n) && n > 0) setDaysFilter(n);
+              }
+            }}
+            className="w-16 px-2 py-0.5 text-xs rounded bg-muted/60 border border-border/60 text-foreground text-center focus:outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          <span className="text-xs text-muted-foreground">days</span>
+        </div>
+        {/* All time */}
+        <button
+          onClick={() => { setDaysFilter(0); setDaysInput("0"); }}
+          className={`px-2 py-0.5 rounded text-xs font-medium transition-all flex-shrink-0 ${
+            daysFilter === 0
+              ? "bg-primary/80 text-primary-foreground"
+              : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          All time
+        </button>
+        {/* Issue count summary */}
+        <span className="text-xs text-muted-foreground ml-2">
+          <span className="font-semibold text-foreground">{sorted.length}</span> issue{sorted.length !== 1 ? "s" : ""}
+          {daysFilter > 0 && <span className="ml-1 opacity-60">(updated ≤ {daysFilter}d ago)</span>}
+        </span>
         {/* Pin / Hide quick-add controls */}
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           {pinOpen ? (
