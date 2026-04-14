@@ -137,3 +137,13 @@
 - [x] This causes My Issues + Closed status to return empty (involvement set never includes Closed issues)
 - [x] Fix: removed the status restriction from fetchMyInvolvedIssues JQL — now covers all statuses
 - [x] All 11 tests pass after the fix
+
+## Round 19 - Auto-Refresh Monitor with Change Notifications
+- [x] Add auto-refresh interval setting in toolbar (number input, default 3 min, 0 = disabled)
+- [x] Persist interval setting in localStorage so it survives page reloads
+- [x] Implement auto-refresh timer with 1-second tick: refetch on interval
+- [x] Show countdown indicator in the interval control (e.g. "(2:45)")
+- [x] Detect changes: status change, new comment (by latestCommentDate), assignee change, new issue in results
+- [x] Request Browser Notification permission when auto-refresh is enabled
+- [x] Show browser notification when tab is hidden and changes detected
+- [x] Show toast notifications for changes regardless of tab focus

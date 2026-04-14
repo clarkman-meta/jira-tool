@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -1209,8 +1209,15 @@ export default function Dashboard() {
   const activeKey = params?.key ?? projects[0]?.key ?? "DGTK";
   const activeProject = projects.find((p) => p.key === activeKey) ?? projects[0];
 
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  // Auto-refresh interval in minutes (0 = disabled). Persisted in localStorage.
+  const [refreshInterval, setRefreshInterval] = useState<number>(() => {
+    const saved = localStorage.getItem("jira-monitor-refresh-interval");
+    return saved !== null ? Math.max(0, parseInt(saved, 10) || 0) : 3;
+  });
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState<number>(0); // seconds until next refresh
+  // Snapshot of previous issues for change detection
+  const prevIssuesRef = useRef<JiraIssue[]>([]);
   const [myIssuesOnly, setMyIssuesOnly] = useState(true);
 
   // Status filter lives at Dashboard level so it can be passed to the server-side query
@@ -1228,17 +1235,95 @@ export default function Dashboard() {
     { enabled: !!activeKey, staleTime: 60_000 }
   );
 
-  const handleRefresh = useCallback(async () => {
-    await refetch();
-    setLastRefresh(new Date());
-    toast.success("Issues refreshed");
-  }, [refetch]);
+  // Request browser notification permission
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  }, []);
 
+  // Detect changes between previous and new issues, fire browser notifications
+  const detectAndNotify = useCallback((newIssues: JiraIssue[]) => {
+    const prev = prevIssuesRef.current;
+    if (prev.length === 0) {
+      prevIssuesRef.current = newIssues;
+      return;
+    }
+    const prevMap = new Map<string, JiraIssue>(prev.map((i) => [i.key, i]));
+    const changes: string[] = [];
+
+    for (const issue of newIssues) {
+      const old = prevMap.get(issue.key);
+      if (!old) {
+        changes.push(`${issue.key}: New issue added — ${issue.summary.slice(0, 60)}`);
+        continue;
+      }
+      if (old.status !== issue.status) {
+        changes.push(`${issue.key}: Status changed ${old.status} → ${issue.status}`);
+      }
+      if (old.latestCommentDate !== issue.latestCommentDate && issue.latestCommentDate) {
+        const author = issue.latestCommentAuthor ?? "Someone";
+        changes.push(`${issue.key}: New comment by ${author}`);
+      }
+      if (old.assigneeId !== issue.assigneeId) {
+        const name = issue.assigneeName ?? "Unassigned";
+        changes.push(`${issue.key}: Assignee changed to ${name}`);
+      }
+    }
+
+    prevIssuesRef.current = newIssues;
+
+    if (changes.length === 0) return;
+
+    // Show toast for all changes
+    changes.forEach((msg) => toast.info(msg, { duration: 6000 }));
+
+    // Show browser notification only when tab is not focused
+    if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+      const title = `Jira Monitor: ${changes.length} update${changes.length > 1 ? "s" : ""}`;
+      const body = changes.slice(0, 3).join("\n") + (changes.length > 3 ? `\n...and ${changes.length - 3} more` : "");
+      new Notification(title, { body, icon: "/favicon.ico" });
+    }
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    const result = await refetch();
+    setLastRefresh(new Date());
+    if (result.data?.issues) {
+      detectAndNotify(result.data.issues);
+    }
+  }, [refetch, detectAndNotify]);
+
+  // Auto-refresh timer
   useEffect(() => {
-    if (!autoRefresh) return;
-    const id = setInterval(handleRefresh, 5 * 60 * 1000);
-    return () => clearInterval(id);
-  }, [autoRefresh, handleRefresh]);
+    if (refreshInterval <= 0) {
+      setCountdown(0);
+      return;
+    }
+    const totalSeconds = refreshInterval * 60;
+    setCountdown(totalSeconds);
+    const tick = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          handleRefresh();
+          return totalSeconds;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [refreshInterval, handleRefresh]);
+
+  // Persist refreshInterval to localStorage
+  useEffect(() => {
+    localStorage.setItem("jira-monitor-refresh-interval", String(refreshInterval));
+  }, [refreshInterval]);
+
+  // Request notification permission when auto-refresh is enabled
+  useEffect(() => {
+    if (refreshInterval > 0) requestNotificationPermission();
+  }, [refreshInterval, requestNotificationPermission]);
 
   const { data: watchedData } = trpc.watchlist.list.useQuery();
   const { data: hiddenData } = trpc.hidden.list.useQuery();
@@ -1407,18 +1492,34 @@ export default function Dashboard() {
                   Updated {formatDate(lastRefresh.toISOString())}
                 </span>
               )}
+              {/* Auto-refresh interval control */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant="outline" size="sm"
-                    onClick={() => setAutoRefresh((v) => !v)}
-                    className={`gap-1.5 text-xs ${autoRefresh ? "border-primary/50 text-primary bg-primary/10" : ""}`}
-                  >
-                    <Zap className={`w-3.5 h-3.5 ${autoRefresh ? "text-primary" : ""}`} />
-                    <span className="hidden sm:inline">Auto</span>
-                  </Button>
+                  <div className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
+                    refreshInterval > 0 ? "border-primary/50 bg-primary/10 text-primary" : "border-border text-muted-foreground"
+                  }`}>
+                    <Zap className="w-3 h-3 flex-shrink-0" />
+                    <input
+                      type="number"
+                      min={0}
+                      max={60}
+                      value={refreshInterval}
+                      onChange={(e) => setRefreshInterval(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-7 bg-transparent text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <span className="hidden sm:inline">min</span>
+                    {refreshInterval > 0 && countdown > 0 && (
+                      <span className="text-[10px] opacity-70 hidden sm:inline">
+                        ({Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")})
+                      </span>
+                    )}
+                  </div>
                 </TooltipTrigger>
-                <TooltipContent>{autoRefresh ? "Auto-refresh ON (5 min)" : "Enable auto-refresh"}</TooltipContent>
+                <TooltipContent>
+                  {refreshInterval > 0
+                    ? `Auto-refresh every ${refreshInterval} min — next in ${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, "0")}`
+                    : "Set minutes for auto-refresh (0 = disabled)"}
+                </TooltipContent>
               </Tooltip>
               <Button
                 variant="outline" size="sm"
