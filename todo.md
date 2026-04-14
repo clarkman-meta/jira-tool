@@ -112,3 +112,9 @@
 - [x] Add Labels multi-select filter (teal color, similar to Status dropdown), default selected: "SW"
 - [x] Fetch labels field from Jira API (server/jira.ts) — added "labels" to fields array and mapIssue()
 - [x] Labels filter: client-side, shows all unique labels from current issues with count, supports multi-select + Clear
+
+## Round 15 - Fix Status/Labels Filter Independence
+- [x] Bug: Status dropdown options only show statuses present in Labels-filtered issues (and vice versa)
+- [x] Fix: allStatuses now computed from issuesForStatusOptions (all filters EXCEPT labels)
+- [x] Fix: allLabels now computed from issuesForLabelsOptions (all filters EXCEPT status)
+- [x] Counts in each dropdown now reflect the independent base (not cross-filtered)

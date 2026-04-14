@@ -286,13 +286,6 @@ function IssueTable({
     });
   };
 
-  // Collect all unique statuses from the full issues list
-  const allStatuses = useMemo(() => {
-    const seen = new Set<string>();
-    issues.forEach((i) => seen.add(i.status));
-    return Array.from(seen).sort();
-  }, [issues]);
-
   const toggleLabel = (l: string) => {
     setLabelsFilter((prev) => {
       const next = new Set(prev);
@@ -300,13 +293,6 @@ function IssueTable({
       return next;
     });
   };
-
-  // Collect all unique labels from the full issues list
-  const allLabels = useMemo(() => {
-    const seen = new Set<string>();
-    issues.forEach((i) => i.labels.forEach((l) => seen.add(l)));
-    return Array.from(seen).sort();
-  }, [issues]);
 
   const handleSort = (field: SortField) => {
     setSorts(prev => {
@@ -333,6 +319,58 @@ function IssueTable({
     d.setDate(d.getDate() - daysFilter);
     return d;
   }, [daysFilter]);
+
+  // Helper: apply all filters EXCEPT labels (used for Status dropdown options & counts)
+  const issuesForStatusOptions = useMemo(() => {
+    return issues
+      .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
+      .filter((i) => !cutoffDate || new Date(i.updated) >= cutoffDate)
+      .filter((i) => {
+        if (priorityFilter.size === 0) return true;
+        const ep = (getEffectivePriority(i) ?? "").toLowerCase();
+        const norm =
+          ep === "highest" || ep === "blocker" ? "p0" :
+          ep === "high" ? "p1" :
+          ep === "medium" ? "p2" :
+          ep === "low" ? "p3" :
+          ep === "lowest" ? "p4" : ep;
+        return priorityFilter.has(norm);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]);
+
+  // Helper: apply all filters EXCEPT status (used for Labels dropdown options & counts)
+  const issuesForLabelsOptions = useMemo(() => {
+    return issues
+      .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
+      .filter((i) => !cutoffDate || new Date(i.updated) >= cutoffDate)
+      .filter((i) => {
+        if (priorityFilter.size === 0) return true;
+        const ep = (getEffectivePriority(i) ?? "").toLowerCase();
+        const norm =
+          ep === "highest" || ep === "blocker" ? "p0" :
+          ep === "high" ? "p1" :
+          ep === "medium" ? "p2" :
+          ep === "low" ? "p3" :
+          ep === "lowest" ? "p4" : ep;
+        return priorityFilter.has(norm);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]);
+
+  // Collect all unique statuses — based on issues NOT filtered by labels
+  const allStatuses = useMemo(() => {
+    const seen = new Set<string>();
+    issuesForStatusOptions.forEach((i) => seen.add(i.status));
+    return Array.from(seen).sort();
+  }, [issuesForStatusOptions]);
+
+  // Collect all unique labels — based on issues NOT filtered by status
+  const allLabels = useMemo(() => {
+    const seen = new Set<string>();
+    issuesForLabelsOptions.forEach((i) => i.labels.forEach((l) => seen.add(l)));
+    return Array.from(seen).sort();
+  }, [issuesForLabelsOptions]);
 
   const filtered = useMemo(() =>
     issues
