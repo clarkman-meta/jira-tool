@@ -63,6 +63,7 @@ export interface JiraIssue {
   priority: string | null;
   build: string | null;  // customfield_10433 — used as priority in KITE
   issueType: string | null;
+  labels: string[];  // Jira labels array
   url: string;
 }
 
@@ -113,6 +114,9 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
   const buildObj = fields.customfield_10433 as Record<string, unknown> | null;
   const build = (buildObj?.value as string) ?? null;
 
+  // Labels
+  const labels = Array.isArray(fields.labels) ? (fields.labels as string[]) : [];
+
   // Reporter
   const reporterObj = fields.reporter as Record<string, unknown> | null;
   const reporterId = (reporterObj?.accountId as string) ?? null;
@@ -139,6 +143,7 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
     priority,
     build,
     issueType,
+    labels,
     url: `${baseUrl}/browse/${issue.key}`,
   };
 }
@@ -168,7 +173,7 @@ export async function fetchOpenIssues(
   }
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50; // safety cap: 50 × 100 = 5000 issues max
-  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433"];
+  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433", "labels"];
 
   const allIssues: JiraIssue[] = [];
   let nextPageToken: string | undefined = undefined;
@@ -236,7 +241,7 @@ export async function fetchMyInvolvedIssues(
 // ─── Fetch a single issue by key ─────────────────────────────────────────────
 
 export async function fetchSingleIssue(issueKey: string): Promise<JiraIssue> {
-  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433"];
+  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433", "labels"];
   const response = await jiraClient.get(`/rest/api/3/issue/${issueKey}`, { params: { fields: fields.join(",") } });
   return mapIssue(response.data, JIRA_BASE_URL);
 }

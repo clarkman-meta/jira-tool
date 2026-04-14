@@ -39,6 +39,7 @@ interface JiraIssue {
   priority: string | null;
   build: string | null;
   issueType: string | null;
+  labels: string[];
   url: string;
 }
 
@@ -262,9 +263,12 @@ function IssueTable({
   const [daysInput, setDaysInput] = useState("30");
   // Priority filter: null = All, otherwise a set of selected priority levels
   const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
-  // Status filter: default = only "In Progress"
-  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["In Progress"]));
+  // Status filter: default = Triage + In Progress
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["Triage", "In Progress"]));
   const [statusOpen, setStatusOpen] = useState(false);
+  // Labels filter: default = "SW"
+  const [labelsFilter, setLabelsFilter] = useState<Set<string>>(new Set(["SW"]));
+  const [labelsOpen, setLabelsOpen] = useState(false);
 
   const togglePriority = (p: string) => {
     setPriorityFilter((prev) => {
@@ -286,6 +290,21 @@ function IssueTable({
   const allStatuses = useMemo(() => {
     const seen = new Set<string>();
     issues.forEach((i) => seen.add(i.status));
+    return Array.from(seen).sort();
+  }, [issues]);
+
+  const toggleLabel = (l: string) => {
+    setLabelsFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(l)) next.delete(l); else next.add(l);
+      return next;
+    });
+  };
+
+  // Collect all unique labels from the full issues list
+  const allLabels = useMemo(() => {
+    const seen = new Set<string>();
+    issues.forEach((i) => i.labels.forEach((l) => seen.add(l)));
     return Array.from(seen).sort();
   }, [issues]);
 
@@ -337,9 +356,13 @@ function IssueTable({
       .filter((i) => {
         if (statusFilter.size === 0) return true;
         return statusFilter.has(i.status);
+      })
+      .filter((i) => {
+        if (labelsFilter.size === 0) return true;
+        return i.labels.some((l) => labelsFilter.has(l));
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issues, effectiveKeyword, cutoffDate, priorityFilter, statusFilter, isKite]
+    [issues, effectiveKeyword, cutoffDate, priorityFilter, statusFilter, labelsFilter, isKite]
   );
 
   const sorted = useMemo(() => {
@@ -578,6 +601,79 @@ function IssueTable({
                         <span className="ml-auto text-[10px] text-muted-foreground/60">
                           {issues.filter((i) => i.status === s).length}
                         </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Labels filter dropdown */}
+        <div className="relative flex-shrink-0">
+          <button
+            onClick={() => setLabelsOpen((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+              labelsOpen
+                ? "bg-teal-500/20 text-teal-300 ring-1 ring-teal-500/40"
+                : labelsFilter.size > 0
+                ? "bg-teal-500/15 text-teal-300 ring-1 ring-teal-500/30"
+                : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <Tag className="w-3 h-3" />
+            <span className="hidden sm:inline">Labels</span>
+            {labelsFilter.size > 0 && (
+              <span className="ml-0.5 bg-teal-500/30 text-teal-200 rounded-full px-1.5 text-[10px] font-bold">
+                {labelsFilter.size}
+              </span>
+            )}
+          </button>
+
+          {labelsOpen && (
+            <div
+              className="absolute left-0 top-full mt-1.5 z-50 w-52 rounded-lg border border-border/60 shadow-xl overflow-hidden"
+              style={{ background: "oklch(0.16 0.012 250)" }}
+            >
+              <div className="flex items-center justify-between px-3 py-2 border-b border-border/40">
+                <span className="text-xs font-semibold text-foreground">Filter by Label</span>
+                <div className="flex items-center gap-1">
+                  {labelsFilter.size > 0 && (
+                    <button
+                      onClick={() => setLabelsFilter(new Set())}
+                      className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted/50"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button onClick={() => setLabelsOpen(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-56 overflow-y-auto py-1">
+                {allLabels.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/60 text-center py-4">No labels available</p>
+                ) : (
+                  allLabels.map((l) => {
+                    const checked = labelsFilter.has(l);
+                    const count = issues.filter((i) => i.labels.includes(l)).length;
+                    return (
+                      <label
+                        key={l}
+                        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleLabel(l)}
+                          className="w-3.5 h-3.5 rounded accent-teal-500 cursor-pointer"
+                        />
+                        <span className="text-xs font-medium text-teal-300/90 flex items-center gap-1">
+                          <Tag className="w-2.5 h-2.5 opacity-60" />{l}
+                        </span>
+                        <span className="ml-auto text-[10px] text-muted-foreground/60">{count}</span>
                       </label>
                     );
                   })

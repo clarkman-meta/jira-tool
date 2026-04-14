@@ -106,3 +106,9 @@
 - [x] Show a dropdown with checkboxes for all unique statuses found in current issues (with count per status)
 - [x] Client-side filtering: only show issues whose status matches selected statuses
 - [x] Clear button inside dropdown; badge shows number of selected statuses
+
+## Round 14 - Status Default + Labels Filter
+- [x] Change Status filter default from ["In Progress"] to ["Triage", "In Progress"]
+- [x] Add Labels multi-select filter (teal color, similar to Status dropdown), default selected: "SW"
+- [x] Fetch labels field from Jira API (server/jira.ts) — added "labels" to fields array and mapIssue()
+- [x] Labels filter: client-side, shows all unique labels from current issues with count, supports multi-select + Clear
