@@ -85,3 +85,10 @@
 - [x] Backend: jira.issues tRPC route now accepts myIssues: boolean; when true, fetches involvement keys and intersects with project issues
 - [x] Frontend: My Issues toggle state lifted to Dashboard level; passed as myIssues to the tRPC query for server-side filtering
 - [x] Tooltip updated to describe full involvement semantics (assignee / reporter / watcher / commenter)
+
+## Round 11 - Priority Filter Chips
+- [x] Add P0 / P1 / P2 priority filter chips to the filter bar (Row 2, after time filter)
+- [x] Priority filter works client-side: filter issues whose effective priority matches selected level(s)
+- [x] Support multi-select (e.g. P0+P1 together) and an × clear button
+- [x] For KITE, use build field as effective priority; for others use standard priority field
+- [x] Normalise priority values (highest/blocker→p0, high→p1, medium→p2, low→p3, lowest→p4)

@@ -256,6 +256,16 @@ function IssueTable({
   const [pinOpen, setPinOpen] = useState(false);
   const [daysFilter, setDaysFilter] = useState<number>(30);
   const [daysInput, setDaysInput] = useState("30");
+  // Priority filter: null = All, otherwise a set of selected priority levels
+  const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
+
+  const togglePriority = (p: string) => {
+    setPriorityFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p); else next.add(p);
+      return next;
+    });
+  };
 
   const handleSort = (field: SortField) => {
     setSorts(prev => {
@@ -289,8 +299,21 @@ function IssueTable({
       .filter((i) => {
         if (!cutoffDate) return true;
         return new Date(i.updated) >= cutoffDate;
+      })
+      .filter((i) => {
+        if (priorityFilter.size === 0) return true;
+        const ep = (getEffectivePriority(i) ?? "").toLowerCase();
+        // Normalise: p0/highest/blocker → p0, p1/high → p1, p2/medium → p2, p3/low → p3, p4/lowest → p4
+        const norm =
+          ep === "highest" || ep === "blocker" ? "p0" :
+          ep === "high" ? "p1" :
+          ep === "medium" ? "p2" :
+          ep === "low" ? "p3" :
+          ep === "lowest" ? "p4" : ep;
+        return priorityFilter.has(norm);
       }),
-    [issues, effectiveKeyword, cutoffDate]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]
   );
 
   const sorted = useMemo(() => {
@@ -428,6 +451,37 @@ function IssueTable({
         >
           All time
         </button>
+        {/* Divider */}
+        <div className="w-px h-4 bg-border/60 flex-shrink-0" />
+
+        {/* Priority filter chips */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {([
+            { label: "P0", key: "p0", active: "bg-red-500/25 text-red-300 ring-1 ring-red-500/50", inactive: "bg-muted/50 text-muted-foreground hover:bg-red-500/15 hover:text-red-300" },
+            { label: "P1", key: "p1", active: "bg-orange-500/25 text-orange-300 ring-1 ring-orange-500/50", inactive: "bg-muted/50 text-muted-foreground hover:bg-orange-500/15 hover:text-orange-300" },
+            { label: "P2", key: "p2", active: "bg-yellow-500/25 text-yellow-300 ring-1 ring-yellow-500/50", inactive: "bg-muted/50 text-muted-foreground hover:bg-yellow-500/15 hover:text-yellow-300" },
+          ] as const).map(({ label, key, active, inactive }) => (
+            <button
+              key={key}
+              onClick={() => togglePriority(key)}
+              className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
+                priorityFilter.has(key) ? active : inactive
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {priorityFilter.size > 0 && (
+            <button
+              onClick={() => setPriorityFilter(new Set())}
+              className="px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground transition-colors"
+              title="Clear priority filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
         {/* Issue count summary */}
         <span className="text-xs text-muted-foreground ml-2">
           <span className="font-semibold text-foreground">{sorted.length}</span> issue{sorted.length !== 1 ? "s" : ""}
