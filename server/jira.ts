@@ -213,7 +213,9 @@ export async function fetchMyInvolvedIssues(
 ): Promise<Set<string>> {
   // Build JQL: involvement across the whole instance (or scoped to a project)
   const projectClause = projectKey ? `project = ${projectKey} AND ` : "";
-  const jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}" OR comment ~ "${username}") AND statusCategory != Done AND status != Closed`;
+  // No status restriction here — the statusFilter on fetchOpenIssues controls which statuses are fetched.
+  // We need involvement across ALL statuses so the intersection works correctly for Closed/Done issues too.
+  const jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}" OR comment ~ "${username}")`;
 
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50;

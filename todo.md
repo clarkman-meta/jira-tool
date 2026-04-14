@@ -131,3 +131,9 @@
 - [x] Frontend: statusFilter state lifted to Dashboard level, passed to trpc.jira.issues.useQuery
 - [x] Remove client-side status filtering from the filtered useMemo (now server-side)
 - [x] Default: Triage + In Progress selected; updated test to cover status IN JQL clause
+
+## Round 18 - Fix fetchMyInvolvedIssues Status Restriction Bug
+- [x] Bug: fetchMyInvolvedIssues hardcodes AND statusCategory != Done AND status != Closed in JQL
+- [x] This causes My Issues + Closed status to return empty (involvement set never includes Closed issues)
+- [x] Fix: removed the status restriction from fetchMyInvolvedIssues JQL — now covers all statuses
+- [x] All 11 tests pass after the fix
