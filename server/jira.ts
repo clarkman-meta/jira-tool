@@ -192,6 +192,47 @@ export async function fetchOpenIssues(
   return allIssues;
 }
 
+// ─── Fetch issues where the user has ANY involvement ─────────────────────────
+// Uses: assignee OR reporter OR watcher OR comment
+// The `comment ~` operator searches comment text, matching the user's username.
+
+export async function fetchMyInvolvedIssues(
+  accountId: string,
+  username: string,
+  projectKey?: string,
+): Promise<Set<string>> {
+  // Build JQL: involvement across the whole instance (or scoped to a project)
+  const projectClause = projectKey ? `project = ${projectKey} AND ` : "";
+  const jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}" OR comment ~ "${username}") AND statusCategory != Done AND status != Closed`;
+
+  const PAGE_SIZE = 100;
+  const MAX_PAGES = 50;
+  const involvedKeys = new Set<string>();
+  let nextPageToken: string | undefined = undefined;
+  let pageCount = 0;
+
+  do {
+    const body: Record<string, unknown> = {
+      jql,
+      maxResults: PAGE_SIZE,
+      fields: ["summary"],  // minimal fields — we only need the key
+    };
+    if (nextPageToken) body.nextPageToken = nextPageToken;
+
+    const response = await jiraClient.post("/rest/api/3/search/jql", body);
+    const data = response.data as { issues: { key: string }[]; nextPageToken?: string; isLast?: boolean };
+
+    for (const issue of data.issues ?? []) {
+      involvedKeys.add(issue.key);
+    }
+
+    nextPageToken = (data.isLast === false && data.nextPageToken) ? data.nextPageToken : undefined;
+    pageCount++;
+  } while (nextPageToken && pageCount < MAX_PAGES);
+
+  return involvedKeys;
+}
+
 // ─── Fetch a single issue by key ─────────────────────────────────────────────
 
 export async function fetchSingleIssue(issueKey: string): Promise<JiraIssue> {

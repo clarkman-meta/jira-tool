@@ -228,7 +228,7 @@ function StageFilterBar({
 
 function IssueTable({
   issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys,
-  activeProjectKey, onHideIssue, onPinIssue
+  activeProjectKey, onHideIssue, onPinIssue, myIssuesOnly, onToggleMyIssues
 }: {
   issues: JiraIssue[];
   loading: boolean;
@@ -240,6 +240,8 @@ function IssueTable({
   activeProjectKey: string;
   onHideIssue: (key: string) => void;
   onPinIssue: (key: string) => void;
+  myIssuesOnly: boolean;
+  onToggleMyIssues: () => void;
 }) {
   // Default: priority asc first, updated desc as secondary
   const [sorts, setSorts] = useState<SortConfig[]>([
@@ -252,7 +254,6 @@ function IssueTable({
   const [customKeyword, setCustomKeyword] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [pinOpen, setPinOpen] = useState(false);
-  const [myIssuesOnly, setMyIssuesOnly] = useState(true);
   const [daysFilter, setDaysFilter] = useState<number>(30);
   const [daysInput, setDaysInput] = useState("30");
 
@@ -285,12 +286,11 @@ function IssueTable({
   const filtered = useMemo(() =>
     issues
       .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
-      .filter((i) => !myIssuesOnly || i.assigneeId === myAccountId)
       .filter((i) => {
         if (!cutoffDate) return true;
         return new Date(i.updated) >= cutoffDate;
       }),
-    [issues, effectiveKeyword, myIssuesOnly, myAccountId, cutoffDate]
+    [issues, effectiveKeyword, cutoffDate]
   );
 
   const sorted = useMemo(() => {
@@ -355,7 +355,7 @@ function IssueTable({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setMyIssuesOnly((v) => !v)}
+              onClick={onToggleMyIssues}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all flex-shrink-0 ${
                 myIssuesOnly
                   ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
@@ -371,7 +371,7 @@ function IssueTable({
               )}
             </button>
           </TooltipTrigger>
-          <TooltipContent>{myIssuesOnly ? "Showing only your issues — click to show all" : "Show only issues assigned to you"}</TooltipContent>
+          <TooltipContent>{myIssuesOnly ? "Showing issues where you are involved (assignee / reporter / watcher / commenter) — click to show all" : "Show only issues where you have any involvement"}</TooltipContent>
         </Tooltip>
       </div>
 
@@ -858,6 +858,7 @@ export default function Dashboard() {
 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [myIssuesOnly, setMyIssuesOnly] = useState(true);
 
   const {
     data: issueData,
@@ -865,7 +866,7 @@ export default function Dashboard() {
     refetch,
     isFetching,
   } = trpc.jira.issues.useQuery(
-    { projectKey: activeKey },
+    { projectKey: activeKey, myIssues: myIssuesOnly },
     { enabled: !!activeKey, staleTime: 60_000 }
   );
 
@@ -1073,6 +1074,8 @@ export default function Dashboard() {
             activeProjectKey={activeKey}
             onHideIssue={handleHideIssue}
             onPinIssue={handlePinIssue}
+            myIssuesOnly={myIssuesOnly}
+            onToggleMyIssues={() => setMyIssuesOnly((v) => !v)}
           />
         </div>
 
