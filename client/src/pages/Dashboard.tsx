@@ -228,7 +228,8 @@ function StageFilterBar({
 
 function IssueTable({
   issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys,
-  activeProjectKey, onHideIssue, onPinIssue, myIssuesOnly, onToggleMyIssues
+  activeProjectKey, onHideIssue, onPinIssue, myIssuesOnly, onToggleMyIssues,
+  hiddenIssues, onUnhideIssue
 }: {
   issues: JiraIssue[];
   loading: boolean;
@@ -242,6 +243,8 @@ function IssueTable({
   onPinIssue: (key: string) => void;
   myIssuesOnly: boolean;
   onToggleMyIssues: () => void;
+  hiddenIssues: { issueKey: string }[];
+  onUnhideIssue: (key: string) => void;
 }) {
   // Default: priority asc first, updated desc as secondary
   const [sorts, setSorts] = useState<SortConfig[]>([
@@ -254,6 +257,7 @@ function IssueTable({
   const [customKeyword, setCustomKeyword] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [pinOpen, setPinOpen] = useState(false);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
   const [daysFilter, setDaysFilter] = useState<number>(30);
   const [daysInput, setDaysInput] = useState("30");
   // Priority filter: null = All, otherwise a set of selected priority levels
@@ -487,8 +491,76 @@ function IssueTable({
           <span className="font-semibold text-foreground">{sorted.length}</span> issue{sorted.length !== 1 ? "s" : ""}
           {daysFilter > 0 && <span className="ml-1 opacity-60">(updated ≤ {daysFilter}d ago)</span>}
         </span>
-        {/* Pin / Hide quick-add controls */}
+        {/* Hidden Issues popover + Pin Issue */}
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          {/* Hidden Issues button */}
+          <div className="relative">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setHiddenOpen((v) => !v)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                    hiddenOpen
+                      ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/40"
+                      : "bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  }`}
+                >
+                  <EyeOff className="w-3 h-3" />
+                  <span className="hidden sm:inline">Hidden</span>
+                  {hiddenIssues.length > 0 && (
+                    <span className={`ml-0.5 rounded-full px-1.5 text-[10px] font-bold ${
+                      hiddenOpen ? "bg-red-500/30 text-red-200" : "bg-muted text-muted-foreground"
+                    }`}>
+                      {hiddenIssues.length}
+                    </span>
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>View and restore hidden issues</TooltipContent>
+            </Tooltip>
+
+            {/* Hidden issues dropdown panel */}
+            {hiddenOpen && (
+              <div
+                className="absolute right-0 top-full mt-1.5 z-50 w-72 rounded-lg border border-border/60 shadow-xl overflow-hidden"
+                style={{ background: "oklch(0.16 0.012 250)" }}
+              >
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border/40">
+                  <span className="text-xs font-semibold text-foreground">Hidden Issues</span>
+                  <button onClick={() => setHiddenOpen(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {hiddenIssues.length === 0 ? (
+                    <p className="text-xs text-muted-foreground/60 text-center py-6 px-3">
+                      No hidden issues for this project
+                    </p>
+                  ) : (
+                    <ul className="py-1">
+                      {hiddenIssues.map((h) => (
+                        <li key={h.issueKey} className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-muted/30 transition-colors">
+                          <span className="text-xs font-mono font-semibold text-red-300/80">{h.issueKey}</span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={() => { onUnhideIssue(h.issueKey); }}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-muted-foreground hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Restore</span>
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Restore this issue to the table</TooltipContent>
+                          </Tooltip>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           {pinOpen ? (
             <div className="flex items-center gap-1.5">
               <input
@@ -964,6 +1036,10 @@ export default function Dashboard() {
     onSuccess: () => { utils.hidden.list.invalidate(); toast.success("Issue hidden"); },
     onError: (e) => toast.error(e.message),
   });
+  const removeHide = trpc.hidden.remove.useMutation({
+    onSuccess: () => { utils.hidden.list.invalidate(); toast.success("Issue restored"); },
+    onError: (e) => toast.error(e.message),
+  });
   const addWatch = trpc.watchlist.add.useMutation({
     onSuccess: () => { utils.watchlist.list.invalidate(); toast.success("Issue pinned"); },
     onError: (e) => toast.error(e.message),
@@ -974,6 +1050,16 @@ export default function Dashboard() {
     const projectKey = key.includes("-") ? key.split("-")[0] : activeKey;
     addHide.mutate({ issueKey: key, projectKey });
   }, [addHide, activeKey]);
+
+  const handleUnhideIssue = useCallback((key: string) => {
+    removeHide.mutate({ issueKey: key });
+  }, [removeHide]);
+
+  // Hidden issues scoped to the active project
+  const projectHiddenIssues = useMemo(
+    () => (hiddenData ?? []).filter((h) => h.projectKey === activeKey),
+    [hiddenData, activeKey]
+  );
 
   const handlePinIssue = useCallback((key: string) => {
     if (!key) return;
@@ -1130,6 +1216,8 @@ export default function Dashboard() {
             onPinIssue={handlePinIssue}
             myIssuesOnly={myIssuesOnly}
             onToggleMyIssues={() => setMyIssuesOnly((v) => !v)}
+            hiddenIssues={projectHiddenIssues}
+            onUnhideIssue={handleUnhideIssue}
           />
         </div>
 

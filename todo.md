@@ -92,3 +92,10 @@
 - [x] Support multi-select (e.g. P0+P1 together) and an × clear button
 - [x] For KITE, use build field as effective priority; for others use standard priority field
 - [x] Normalise priority values (highest/blocker→p0, high→p1, medium→p2, low→p3, lowest→p4)
+
+## Round 12 - Hidden Issues Management Panel
+- [x] Add "Hidden" button in filter bar that shows count badge when there are hidden issues
+- [x] Clicking the button opens a dropdown panel listing all hidden issues for the current project
+- [x] Each hidden issue row shows the issue key and a "Restore" (eye) button to unhide it
+- [x] Restore removes the issue from the hidden list and it reappears in the table immediately
+- [x] Panel scoped to the active project (only shows hidden issues for current project key)
