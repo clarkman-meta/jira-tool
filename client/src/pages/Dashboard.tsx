@@ -262,6 +262,9 @@ function IssueTable({
   const [daysInput, setDaysInput] = useState("30");
   // Priority filter: null = All, otherwise a set of selected priority levels
   const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
+  // Status filter: default = only "In Progress"
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["In Progress"]));
+  const [statusOpen, setStatusOpen] = useState(false);
 
   const togglePriority = (p: string) => {
     setPriorityFilter((prev) => {
@@ -270,6 +273,21 @@ function IssueTable({
       return next;
     });
   };
+
+  const toggleStatus = (s: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s); else next.add(s);
+      return next;
+    });
+  };
+
+  // Collect all unique statuses from the full issues list
+  const allStatuses = useMemo(() => {
+    const seen = new Set<string>();
+    issues.forEach((i) => seen.add(i.status));
+    return Array.from(seen).sort();
+  }, [issues]);
 
   const handleSort = (field: SortField) => {
     setSorts(prev => {
@@ -315,9 +333,13 @@ function IssueTable({
           ep === "low" ? "p3" :
           ep === "lowest" ? "p4" : ep;
         return priorityFilter.has(norm);
+      })
+      .filter((i) => {
+        if (statusFilter.size === 0) return true;
+        return statusFilter.has(i.status);
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]
+    [issues, effectiveKeyword, cutoffDate, priorityFilter, statusFilter, isKite]
   );
 
   const sorted = useMemo(() => {
@@ -483,6 +505,85 @@ function IssueTable({
             >
               <X className="w-3 h-3" />
             </button>
+          )}
+        </div>
+
+        {/* Status filter dropdown */}
+        <div className="relative flex-shrink-0">
+          <button
+            onClick={() => setStatusOpen((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+              statusOpen
+                ? "bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/40"
+                : statusFilter.size > 0
+                ? "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30"
+                : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <Layers className="w-3 h-3" />
+            <span className="hidden sm:inline">Status</span>
+            {statusFilter.size > 0 && (
+              <span className="ml-0.5 bg-violet-500/30 text-violet-200 rounded-full px-1.5 text-[10px] font-bold">
+                {statusFilter.size}
+              </span>
+            )}
+          </button>
+
+          {statusOpen && (
+            <div
+              className="absolute left-0 top-full mt-1.5 z-50 w-52 rounded-lg border border-border/60 shadow-xl overflow-hidden"
+              style={{ background: "oklch(0.16 0.012 250)" }}
+            >
+              <div className="flex items-center justify-between px-3 py-2 border-b border-border/40">
+                <span className="text-xs font-semibold text-foreground">Filter by Status</span>
+                <div className="flex items-center gap-1">
+                  {statusFilter.size > 0 && (
+                    <button
+                      onClick={() => setStatusFilter(new Set())}
+                      className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted/50"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button onClick={() => setStatusOpen(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-56 overflow-y-auto py-1">
+                {allStatuses.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/60 text-center py-4">No statuses available</p>
+                ) : (
+                  allStatuses.map((s) => {
+                    const style = getStatusStyle(
+                      issues.find((i) => i.status === s)?.statusCategory ?? "",
+                      s
+                    );
+                    const checked = statusFilter.has(s);
+                    return (
+                      <label
+                        key={s}
+                        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleStatus(s)}
+                          className="w-3.5 h-3.5 rounded accent-violet-500 cursor-pointer"
+                        />
+                        <span className={`flex items-center gap-1.5 text-xs font-medium ${style.text}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${style.dot}`} />
+                          {s}
+                        </span>
+                        <span className="ml-auto text-[10px] text-muted-foreground/60">
+                          {issues.filter((i) => i.status === s).length}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           )}
         </div>
 

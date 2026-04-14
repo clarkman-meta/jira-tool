@@ -99,3 +99,10 @@
 - [x] Each hidden issue row shows the issue key and a "Restore" (eye) button to unhide it
 - [x] Restore removes the issue from the hidden list and it reappears in the table immediately
 - [x] Panel scoped to the active project (only shows hidden issues for current project key)
+
+## Round 13 - Status Filter
+- [x] Add Status multi-select filter to filter bar Row 2 (after priority chips)
+- [x] Default: only "In Progress" selected on load
+- [x] Show a dropdown with checkboxes for all unique statuses found in current issues (with count per status)
+- [x] Client-side filtering: only show issues whose status matches selected statuses
+- [x] Clear button inside dropdown; badge shows number of selected statuses
