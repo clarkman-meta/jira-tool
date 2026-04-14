@@ -230,7 +230,7 @@ function StageFilterBar({
 function IssueTable({
   issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys,
   activeProjectKey, onHideIssue, onPinIssue, myIssuesOnly, onToggleMyIssues,
-  hiddenIssues, onUnhideIssue
+  hiddenIssues, onUnhideIssue, statusFilter, onStatusFilterChange, allStatuses
 }: {
   issues: JiraIssue[];
   loading: boolean;
@@ -246,6 +246,9 @@ function IssueTable({
   onToggleMyIssues: () => void;
   hiddenIssues: { issueKey: string }[];
   onUnhideIssue: (key: string) => void;
+  statusFilter: Set<string>;
+  onStatusFilterChange: (s: Set<string>) => void;
+  allStatuses: string[];
 }) {
   // Default: priority asc first, updated desc as secondary
   const [sorts, setSorts] = useState<SortConfig[]>([
@@ -263,8 +266,6 @@ function IssueTable({
   const [daysInput, setDaysInput] = useState("30");
   // Priority filter: null = All, otherwise a set of selected priority levels
   const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
-  // Status filter: default = Triage + In Progress
-  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["Triage", "In Progress"]));
   const [statusOpen, setStatusOpen] = useState(false);
   // Labels filter: default = "SW"
   const [labelsFilter, setLabelsFilter] = useState<Set<string>>(new Set(["SW"]));
@@ -279,11 +280,11 @@ function IssueTable({
   };
 
   const toggleStatus = (s: string) => {
-    setStatusFilter((prev) => {
-      const next = new Set(prev);
+    onStatusFilterChange((() => {
+      const next = new Set(statusFilter);
       if (next.has(s)) next.delete(s); else next.add(s);
       return next;
-    });
+    })());
   };
 
   const toggleLabel = (l: string) => {
@@ -358,13 +359,6 @@ function IssueTable({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]);
 
-  // Collect all unique statuses — based on issues NOT filtered by labels
-  const allStatuses = useMemo(() => {
-    const seen = new Set<string>();
-    issuesForStatusOptions.forEach((i) => seen.add(i.status));
-    return Array.from(seen).sort();
-  }, [issuesForStatusOptions]);
-
   // Collect all unique labels — based on issues NOT filtered by status
   const allLabels = useMemo(() => {
     const seen = new Set<string>();
@@ -392,15 +386,11 @@ function IssueTable({
         return priorityFilter.has(norm);
       })
       .filter((i) => {
-        if (statusFilter.size === 0) return true;
-        return statusFilter.has(i.status);
-      })
-      .filter((i) => {
         if (labelsFilter.size === 0) return true;
         return i.labels.some((l) => labelsFilter.has(l));
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issues, effectiveKeyword, cutoffDate, priorityFilter, statusFilter, labelsFilter, isKite]
+    [issues, effectiveKeyword, cutoffDate, priorityFilter, labelsFilter, isKite]
   );
 
   const sorted = useMemo(() => {
@@ -600,7 +590,7 @@ function IssueTable({
                 <div className="flex items-center gap-1">
                   {statusFilter.size > 0 && (
                     <button
-                      onClick={() => setStatusFilter(new Set())}
+                      onClick={() => onStatusFilterChange(new Set())}
                       className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted/50"
                     >
                       Clear
@@ -612,14 +602,17 @@ function IssueTable({
                 </div>
               </div>
               <div className="max-h-56 overflow-y-auto py-1">
-                {allStatuses.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/60 text-center py-4">No statuses available</p>
-                ) : (
-                  allStatuses.map((s) => {
-                    const style = getStatusStyle(
-                      issues.find((i) => i.status === s)?.statusCategory ?? "",
-                      s
-                    );
+                {allStatuses.map((s) => {
+                    // Fixed statusCategory mapping for the 6 known statuses
+                    const statusCategoryMap: Record<string, string> = {
+                      "Backlog": "new",
+                      "Triage": "new",
+                      "To Do": "new",
+                      "Blocked": "indeterminate",
+                      "In Progress": "indeterminate",
+                      "Closed": "done",
+                    };
+                    const style = getStatusStyle(statusCategoryMap[s] ?? "new", s);
                     const checked = statusFilter.has(s);
                     return (
                       <label
@@ -641,8 +634,7 @@ function IssueTable({
                         </span>
                       </label>
                     );
-                  })
-                )}
+                  })}
               </div>
             </div>
           )}
@@ -1221,13 +1213,18 @@ export default function Dashboard() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [myIssuesOnly, setMyIssuesOnly] = useState(true);
 
+  // Status filter lives at Dashboard level so it can be passed to the server-side query
+  const ALL_STATUSES = ["Backlog", "Triage", "To Do", "Blocked", "In Progress", "Closed"] as const;
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["Triage", "In Progress"]));
+  const statusFilterArray = useMemo(() => Array.from(statusFilter), [statusFilter]);
+
   const {
     data: issueData,
     isLoading: issuesLoading,
     refetch,
     isFetching,
   } = trpc.jira.issues.useQuery(
-    { projectKey: activeKey, myIssues: myIssuesOnly },
+    { projectKey: activeKey, myIssues: myIssuesOnly, statusFilter: statusFilterArray },
     { enabled: !!activeKey, staleTime: 60_000 }
   );
 
@@ -1438,22 +1435,25 @@ export default function Dashboard() {
 
         {/* Issue Table (includes filter bar internally) */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          <IssueTable
-            issues={issues}
-            loading={issuesLoading}
-            error={issueError}
-            myAccountId={myAccountId}
-            projectColor={activeProject?.color ?? "#6366f1"}
-            projectKey={activeKey}
-            watchedKeys={watchedKeys}
-            activeProjectKey={activeKey}
-            onHideIssue={handleHideIssue}
-            onPinIssue={handlePinIssue}
-            myIssuesOnly={myIssuesOnly}
-            onToggleMyIssues={() => setMyIssuesOnly((v) => !v)}
-            hiddenIssues={projectHiddenIssues}
-            onUnhideIssue={handleUnhideIssue}
-          />
+           <IssueTable
+             issues={issues}
+             loading={issuesLoading}
+             error={issueError}
+             myAccountId={myAccountId}
+             projectColor={activeProject?.color ?? "#6366f1"}
+             projectKey={activeKey}
+             watchedKeys={watchedKeys}
+             activeProjectKey={activeKey}
+             onHideIssue={handleHideIssue}
+             onPinIssue={handlePinIssue}
+             myIssuesOnly={myIssuesOnly}
+             onToggleMyIssues={() => setMyIssuesOnly((v) => !v)}
+             hiddenIssues={projectHiddenIssues}
+             onUnhideIssue={handleUnhideIssue}
+             statusFilter={statusFilter}
+             onStatusFilterChange={setStatusFilter}
+             allStatuses={ALL_STATUSES as unknown as string[]}
+           />
         </div>
 
         {/* Footer */}

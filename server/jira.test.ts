@@ -110,12 +110,23 @@ describe("fetchOpenIssues", () => {
     expect(issues[0].latestCommentAuthor).toBeNull();
   });
 
-  it("uses correct JQL with statusCategory != Done", async () => {
+  it("uses correct JQL with project key and no status restriction by default", async () => {
     mockPost.mockResolvedValueOnce({ data: { issues: [] } });
     await fetchOpenIssues("DGTK");
     const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
-    expect(callArgs[1].jql).toContain("statusCategory != Done");
+    // Status filtering is now done via statusFilter param (server-side JQL status IN)
+    // Default call without statusFilter should NOT include statusCategory restriction
     expect(callArgs[1].jql).toContain("DGTK");
+    expect(callArgs[1].jql).not.toContain("statusCategory");
+  });
+
+  it("uses status IN clause when statusFilter is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, ["Triage", "In Progress"]);
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain("status IN");
+    expect(callArgs[1].jql).toContain("Triage");
+    expect(callArgs[1].jql).toContain("In Progress");
   });
 
   it("uses fixed PAGE_SIZE of 100 for cursor-based pagination", async () => {

@@ -155,19 +155,24 @@ export async function fetchOpenIssues(
   _maxResults = 100,
   issueTypeFilter?: string | null,
   customJql?: string | null,
+  statusFilter?: string[] | null,
 ): Promise<JiraIssue[]> {
   let jql: string;
   if (customJql && customJql.trim()) {
     // Use the fully custom JQL as-is
     jql = customJql.trim();
   } else {
-    jql = `project = ${projectKey} AND statusCategory != Done AND status != Closed`;
+    jql = `project = ${projectKey}`;
     if (issueTypeFilter) {
       const types = issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
       if (types.length > 0) {
         const typeList = types.map((t) => `"${t}"`).join(", ");
         jql += ` AND issuetype IN (${typeList})`;
       }
+    }
+    if (statusFilter && statusFilter.length > 0) {
+      const statusList = statusFilter.map((s) => `"${s}"`).join(", ");
+      jql += ` AND status IN (${statusList})`;
     }
     jql += " ORDER BY updated DESC";
   }

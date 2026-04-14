@@ -151,6 +151,7 @@ export const appRouter = router({
           projectKey: z.string().min(1).max(32),
           maxResults: z.number().int().min(1).max(500).optional().default(200),
           myIssues: z.boolean().optional().default(false),
+          statusFilter: z.array(z.string()).optional().default(["Triage", "In Progress"]),
         })
       )
       .query(async ({ input }) => {
@@ -162,8 +163,8 @@ export const appRouter = router({
           const issueTypeFilter = (project as { issueTypeFilter?: string | null } | undefined)?.issueTypeFilter ?? null;
           const customJql = (project as { customJql?: string | null } | undefined)?.customJql ?? null;
 
-          // Pass customJql (or issueTypeFilter) to JQL for server-side filtering
-          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql);
+          // Pass customJql (or issueTypeFilter) and statusFilter to JQL for server-side filtering
+          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql, input.statusFilter.length > 0 ? input.statusFilter : null);
 
           // Apply titleFilter only when no customJql is set
           let issues = allIssues;

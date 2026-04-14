@@ -118,3 +118,16 @@
 - [x] Fix: allStatuses now computed from issuesForStatusOptions (all filters EXCEPT labels)
 - [x] Fix: allLabels now computed from issuesForLabelsOptions (all filters EXCEPT status)
 - [x] Counts in each dropdown now reflect the independent base (not cross-filtered)
+
+## Round 16 - Show All Statuses Including Closed/Done
+- [x] Remove statusCategory != Done AND status != Closed from server-side JQL default
+- [x] Server now fetches issues filtered by statusFilter param (status IN) instead of hardcoded exclusion
+- [x] Frontend Status filter now controls all status visibility via server-side JQL
+
+## Round 17 - Server-side Status Filter with Fixed 6 Options
+- [x] Update server/jira.ts fetchOpenIssues to accept statusFilter: string[] param, add JQL status IN (...) clause
+- [x] Update tRPC router jira.issues to accept statusFilter param and pass to fetchOpenIssues
+- [x] Frontend: hardcode 6 fixed Status options (Backlog, Triage, To Do, Blocked, In Progress, Closed)
+- [x] Frontend: statusFilter state lifted to Dashboard level, passed to trpc.jira.issues.useQuery
+- [x] Remove client-side status filtering from the filtered useMemo (now server-side)
+- [x] Default: Triage + In Progress selected; updated test to cover status IN JQL clause
