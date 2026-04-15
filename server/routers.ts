@@ -215,7 +215,7 @@ export const appRouter = router({
 
             if (unconfirmedIssues.length > 0) {
               await enrichWithCommentInvolvement(
-                unconfirmedIssues.map((i) => i.key),
+                unconfirmedIssues,
                 myAccountId,
                 involvedKeys,
               );

@@ -80,6 +80,11 @@ export interface JiraIssue {
   issueType: string | null;
   labels: string[];  // Jira labels array
   url: string;
+  // Prefetched comment data from search/jql response (up to 20 comments per issue).
+  // Used by enrichWithCommentInvolvement for zero-API-call involvement detection.
+  prefetchedCommentAuthorIds: string[];  // accountId of each returned comment author
+  prefetchedCommentMentionIds: string[]; // accountId of each @mention found in returned comments
+  commentTotal: number;                  // total comment count reported by Jira (may exceed returned)
 }
 
 // ─── Map a raw Jira API issue to our JiraIssue type ───────────────────────────
@@ -101,12 +106,34 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
     ? ((assigneeObj.avatarUrls as Record<string, string>)?.["24x24"] ?? null)
     : null;
 
-  // Latest comment
+  // Latest comment + prefetched comment data for involvement detection
   const commentObj = fields.comment as Record<string, unknown> | null;
   const comments = (commentObj?.comments as unknown[]) ?? [];
+  const commentTotal = (commentObj?.total as number) ?? comments.length;
   let latestComment: string | null = null;
   let latestCommentAuthor: string | null = null;
   let latestCommentDate: string | null = null;
+  const prefetchedCommentAuthorIds: string[] = [];
+  const prefetchedCommentMentionIds: string[] = [];
+
+  for (const raw of comments) {
+    const c = raw as Record<string, unknown>;
+    const author = c.author as Record<string, unknown> | null;
+    const authorId = (author?.accountId as string) ?? null;
+    if (authorId) prefetchedCommentAuthorIds.push(authorId);
+    if (c.body) {
+      const collectMentions = (node: unknown): void => {
+        if (!node || typeof node !== "object") return;
+        const n = node as Record<string, unknown>;
+        if (n.type === "mention" && n.attrs && typeof n.attrs === "object") {
+          const attrs = n.attrs as Record<string, unknown>;
+          if (typeof attrs.id === "string") prefetchedCommentMentionIds.push(attrs.id);
+        }
+        if (Array.isArray(n.content)) (n.content as unknown[]).forEach(collectMentions);
+      };
+      collectMentions(c.body);
+    }
+  }
 
   if (comments.length > 0) {
     const last = comments[comments.length - 1] as Record<string, unknown>;
@@ -160,6 +187,9 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
     issueType,
     labels,
     url: `${baseUrl}/browse/${issue.key}`,
+    prefetchedCommentAuthorIds,
+    prefetchedCommentMentionIds,
+    commentTotal,
   };
 }
 
@@ -376,12 +406,14 @@ export async function fetchOpenIssues(
   return allIssues;
 }
 
-/// ─── Batch-check comments for a list of issue keys ───────────────────────────
+// ─── Batch-check comments for a list of issue keys (API fallback for truncated issues) ────
+// Fetches comments starting at `startAt` (to skip already-scanned prefetched comments).
 // Returns a Set of issue keys where the user is a commenter OR was mentioned.
 // Concurrency-limited (default 8) to avoid hammering the Jira API.
 async function fetchCommentInvolvement(
   issueKeys: string[],
   accountId: string,
+  startAt = 0,
   concurrency = 8,
 ): Promise<Set<string>> {
   const involved = new Set<string>();
@@ -391,7 +423,7 @@ async function fetchCommentInvolvement(
       batch.map(async (key) => {
         try {
           const resp = await jiraClient.get(`/rest/api/3/issue/${key}/comment`, {
-            params: { maxResults: 100, orderBy: "-created" },
+            params: { maxResults: 100, startAt, orderBy: "-created" },
           });
           const data = resp.data as { comments: unknown[] };
           for (const raw of data.comments ?? []) {
@@ -416,17 +448,58 @@ async function fetchCommentInvolvement(
 }
 
 // ─── Enrich involvement set with commenter/mentioned issues ──────────────────
-// Given a list of candidate issue keys, check each one for comments authored by
-// or mentioning the user. Merges results into involvedKeys in-place and returns it.
+// Strategy (two-pass, minimal API calls):
+//
+// Pass 1 — scan prefetched comments (already in JiraIssue from search/jql, up to 20 per issue):
+//   - Found involvement → add to involvedKeys immediately, done for this issue.
+//   - Not found AND commentTotal > prefetchedCount → queue for API fallback.
+//   - Not found AND commentTotal <= prefetchedCount → all comments in prefetch, confirmed not involved.
+//
+// Pass 2 — API fallback for truncated issues only (rare: >20 comments):
+//   - Fetch comments starting at prefetchedCount (skip already-scanned ones).
+//   - Same author/mention check.
+//
+// Result: zero extra API calls in the common case (<=20 comments per issue).
 export async function enrichWithCommentInvolvement(
-  candidateKeys: string[],
+  candidates: JiraIssue[],
   accountId: string,
   involvedKeys: Set<string>,
 ): Promise<Set<string>> {
-  const toCheck = candidateKeys.filter((k) => !involvedKeys.has(k));
-  if (toCheck.length === 0) return involvedKeys;
-  const commentInvolved = await fetchCommentInvolvement(toCheck, accountId);
-  Array.from(commentInvolved).forEach((key) => involvedKeys.add(key));
+  // Pass 1: scan prefetched comments
+  const needApiCheck: Array<{ key: string; startAt: number }> = [];
+
+  for (const issue of candidates) {
+    if (involvedKeys.has(issue.key)) continue;
+
+    const prefetchedCount = issue.prefetchedCommentAuthorIds.length;
+    const foundInPrefetch =
+      issue.prefetchedCommentAuthorIds.includes(accountId) ||
+      issue.prefetchedCommentMentionIds.includes(accountId);
+
+    if (foundInPrefetch) {
+      // Found in prefetch — no API call needed
+      involvedKeys.add(issue.key);
+    } else if (issue.commentTotal > prefetchedCount) {
+      // Prefetch was truncated; older comments not yet scanned — queue for API
+      needApiCheck.push({ key: issue.key, startAt: prefetchedCount });
+    }
+    // else: all comments were in prefetch and user not found — confirmed not involved
+  }
+
+  // Pass 2: API fallback for truncated issues
+  if (needApiCheck.length > 0) {
+    console.log(`[Jira] enrichWithCommentInvolvement: ${needApiCheck.length} issue(s) need API fallback (truncated comments)`);
+    const byStartAt = new Map<number, string[]>();
+    for (const { key, startAt } of needApiCheck) {
+      if (!byStartAt.has(startAt)) byStartAt.set(startAt, []);
+      byStartAt.get(startAt)!.push(key);
+    }
+    for (const [startAt, keys] of Array.from(byStartAt.entries())) {
+      const commentInvolved = await fetchCommentInvolvement(keys, accountId, startAt);
+      Array.from(commentInvolved).forEach((key) => involvedKeys.add(key));
+    }
+  }
+
   return involvedKeys;
 }
 

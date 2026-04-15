@@ -300,6 +300,38 @@ describe("validateJiraCredentials", () => {
 
 // ─── enrichWithCommentInvolvement tests ───────────────────────────────────────
 
+// ─── Helpers for enrichWithCommentInvolvement tests ──────────────────────────
+
+import type { JiraIssue } from "./jira";
+
+function makeJiraIssue(overrides: Partial<JiraIssue> = {}): JiraIssue {
+  return {
+    key: "DGTK-100",
+    summary: "Test issue",
+    status: "In Progress",
+    statusCategory: "indeterminate",
+    assigneeId: null,
+    assigneeName: null,
+    assigneeAvatar: null,
+    reporterId: null,
+    reporterName: null,
+    reporterAvatar: null,
+    latestComment: null,
+    latestCommentAuthor: null,
+    latestCommentDate: null,
+    priority: "Medium",
+    build: null,
+    issueType: "Task",
+    url: "https://example.atlassian.net/browse/DGTK-100",
+    updated: new Date().toISOString(),
+    labels: [],
+    prefetchedCommentAuthorIds: [],
+    prefetchedCommentMentionIds: [],
+    commentTotal: 0,
+    ...overrides,
+  };
+}
+
 describe("enrichWithCommentInvolvement", () => {
   const MY_ACCOUNT_ID = "712020:f04ded31-3e91-47eb-bad9-d5e624e2b95f";
 
@@ -308,86 +340,110 @@ describe("enrichWithCommentInvolvement", () => {
     mockPost.mockReset();
   });
 
-  it("adds issue key when user is the comment author", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: {
-        comments: [
-          {
-            author: { accountId: MY_ACCOUNT_ID },
-            body: { type: "doc", version: 1, content: [] },
-          },
-        ],
-      },
+  // ── Pass 1: prefetch hits (no API call) ──────────────────────────────────
+
+  it("adds issue key from prefetchedCommentAuthorIds without API call", async () => {
+    const issue = makeJiraIssue({
+      key: "DGTK-100",
+      prefetchedCommentAuthorIds: [MY_ACCOUNT_ID, "other-user"],
+      commentTotal: 2,
     });
     const involvedKeys = new Set<string>();
-    await enrichWithCommentInvolvement(["DGTK-100"], MY_ACCOUNT_ID, involvedKeys);
+    await enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys);
     expect(involvedKeys.has("DGTK-100")).toBe(true);
+    expect(mockGet).not.toHaveBeenCalled(); // no API call needed
   });
 
-  it("adds issue key when user is mentioned in ADF body", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: {
-        comments: [
-          {
-            author: { accountId: "other-user" },
-            body: {
-              type: "doc",
-              version: 1,
-              content: [
-                {
-                  type: "paragraph",
-                  content: [
-                    { type: "text", text: "Hey " },
-                    {
-                      type: "mention",
-                      attrs: { id: MY_ACCOUNT_ID, text: "@Clark" },
-                    },
-                  ],
-                },
-              ],
-            },
-          },
-        ],
-      },
+  it("adds issue key from prefetchedCommentMentionIds without API call", async () => {
+    const issue = makeJiraIssue({
+      key: "DGTK-200",
+      prefetchedCommentAuthorIds: ["other-user"],
+      prefetchedCommentMentionIds: [MY_ACCOUNT_ID],
+      commentTotal: 1,
     });
     const involvedKeys = new Set<string>();
-    await enrichWithCommentInvolvement(["DGTK-200"], MY_ACCOUNT_ID, involvedKeys);
+    await enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys);
     expect(involvedKeys.has("DGTK-200")).toBe(true);
+    expect(mockGet).not.toHaveBeenCalled();
   });
 
-  it("does not add issue key when user is not involved in comments", async () => {
-    mockGet.mockResolvedValueOnce({
-      data: {
-        comments: [
-          {
-            author: { accountId: "other-user" },
-            body: {
-              type: "doc",
-              version: 1,
-              content: [{ type: "paragraph", content: [{ type: "text", text: "No mention here" }] }],
-            },
-          },
-        ],
-      },
+  it("does not add issue key when user not in prefetch and comments not truncated", async () => {
+    // commentTotal === prefetchedCount: all comments already scanned, user not found
+    const issue = makeJiraIssue({
+      key: "DGTK-300",
+      prefetchedCommentAuthorIds: ["other-user"],
+      commentTotal: 1, // total == returned, no truncation
     });
     const involvedKeys = new Set<string>();
-    await enrichWithCommentInvolvement(["DGTK-300"], MY_ACCOUNT_ID, involvedKeys);
+    await enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys);
     expect(involvedKeys.has("DGTK-300")).toBe(false);
+    expect(mockGet).not.toHaveBeenCalled(); // confirmed not involved, no API
   });
 
-  it("skips issues already in involvedKeys without calling API", async () => {
+  it("skips issues already in involvedKeys without API call", async () => {
+    const issue = makeJiraIssue({ key: "DGTK-400", commentTotal: 5 });
     const involvedKeys = new Set<string>(["DGTK-400"]);
-    await enrichWithCommentInvolvement(["DGTK-400"], MY_ACCOUNT_ID, involvedKeys);
+    await enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys);
     expect(mockGet).not.toHaveBeenCalled();
     expect(involvedKeys.has("DGTK-400")).toBe(true);
   });
 
+  // ── Pass 2: API fallback for truncated issues (commentTotal > prefetchedCount) ──
+
+  it("calls API with startAt=prefetchedCount when comments are truncated and user not in prefetch", async () => {
+    // Simulate: 24 total comments, 20 prefetched, user not in first 20
+    // API returns comments 21-24 where user IS the author
+    mockGet.mockResolvedValueOnce({
+      data: {
+        comments: [
+          { author: { accountId: MY_ACCOUNT_ID }, body: { type: "doc", version: 1, content: [] } },
+        ],
+      },
+    });
+    const issue = makeJiraIssue({
+      key: "DGTK-500",
+      prefetchedCommentAuthorIds: Array(20).fill("other-user"),
+      commentTotal: 24, // truncated: 24 total, 20 prefetched
+    });
+    const involvedKeys = new Set<string>();
+    await enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys);
+    expect(involvedKeys.has("DGTK-500")).toBe(true);
+    // API must be called with startAt=20 (skip already-scanned prefetch)
+    expect(mockGet).toHaveBeenCalledOnce();
+    const callParams = mockGet.mock.calls[0][1] as { params: Record<string, unknown> };
+    expect(callParams.params.startAt).toBe(20);
+  });
+
+  it("does not add issue key when truncated API check also finds no involvement", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: {
+        comments: [
+          { author: { accountId: "other-user" }, body: { type: "doc", version: 1, content: [] } },
+        ],
+      },
+    });
+    const issue = makeJiraIssue({
+      key: "DGTK-600",
+      prefetchedCommentAuthorIds: Array(20).fill("other-user"),
+      commentTotal: 21,
+    });
+    const involvedKeys = new Set<string>();
+    await enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys);
+    expect(involvedKeys.has("DGTK-600")).toBe(false);
+    expect(mockGet).toHaveBeenCalledOnce();
+  });
+
   it("handles API errors gracefully (does not throw)", async () => {
     mockGet.mockRejectedValueOnce(new Error("403 Forbidden"));
+    const issue = makeJiraIssue({
+      key: "DGTK-700",
+      prefetchedCommentAuthorIds: Array(20).fill("other-user"),
+      commentTotal: 25, // truncated, triggers API call
+    });
     const involvedKeys = new Set<string>();
     await expect(
-      enrichWithCommentInvolvement(["DGTK-500"], MY_ACCOUNT_ID, involvedKeys)
+      enrichWithCommentInvolvement([issue], MY_ACCOUNT_ID, involvedKeys)
     ).resolves.not.toThrow();
-    expect(involvedKeys.has("DGTK-500")).toBe(false);
+    expect(involvedKeys.has("DGTK-700")).toBe(false);
   });
 });
