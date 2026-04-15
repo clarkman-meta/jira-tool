@@ -267,10 +267,15 @@ export async function fetchMyInvolvedIssues(
   accountId: string,
   _username: string,
   projectKey?: string,
+  statusFilter?: string[],
 ): Promise<Set<string>> {
   // Build JQL: assignee OR reporter OR watcher (no comment ~ — we handle that separately)
   const projectClause = projectKey ? `project = ${projectKey} AND ` : "";
-  const jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}")`;
+  let jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}")`;
+  if (statusFilter && statusFilter.length > 0) {
+    const statusList = statusFilter.map((s) => `"${s}"`).join(", ");
+    jql += ` AND status IN (${statusList})`;
+  }
 
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50;

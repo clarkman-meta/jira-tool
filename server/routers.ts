@@ -163,12 +163,9 @@ export const appRouter = router({
           const issueTypeFilter = (project as { issueTypeFilter?: string | null } | undefined)?.issueTypeFilter ?? null;
           const customJql = (project as { customJql?: string | null } | undefined)?.customJql ?? null;
 
-          // Pass customJql (or issueTypeFilter) and statusFilter to JQL for server-side filtering.
-          // When myIssues=true, skip statusFilter so ALL statuses are fetched — involvement
-          // detection must see Closed/Done issues too. Status filtering is handled client-side.
-          const effectiveStatusFilter = input.myIssues
-            ? null
-            : (input.statusFilter.length > 0 ? input.statusFilter : null);
+          // Always pass statusFilter to server — it controls what's fetched regardless of mode.
+          // When user changes statusFilter (e.g. adds Closed), tRPC re-fetches automatically.
+          const effectiveStatusFilter = input.statusFilter.length > 0 ? input.statusFilter : null;
           const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql, effectiveStatusFilter);
 
           // Apply titleFilter only when no customJql is set
@@ -195,8 +192,10 @@ export const appRouter = router({
 
             if (myAccountId) {
               // Step 1: JQL-based involvement (assignee / reporter / watcher)
-              const involvedKeys = await fetchMyInvolvedIssues(myAccountId, username, input.projectKey);
+              // Pass statusFilter so involvement JQL also respects the selected statuses
+              const involvedKeys = await fetchMyInvolvedIssues(myAccountId, username, input.projectKey, effectiveStatusFilter ?? undefined);
               // Step 2: Enrich with commenter / mentioned detection via batch comment API
+              // candidateKeys = issues already filtered by statusFilter from fetchOpenIssues
               const candidateKeys = issues.map((i) => i.key);
               await enrichWithCommentInvolvement(candidateKeys, myAccountId, involvedKeys);
               // Keep only issues that appear in the involved set

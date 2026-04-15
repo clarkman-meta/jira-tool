@@ -164,3 +164,9 @@
 - [x] Server: when myIssues=true, pass null statusFilter to fetchOpenIssues (fetch all statuses)
 - [x] Client: when myIssues=true, apply status filter client-side so Closed issues can still be filtered by user
 - [x] Verify DGTK-3112 and DGTK-3292 appear in My Issues with Closed status selected
+
+## Round 22 - Fix My Issues Status Filter (Correct Architecture)
+- [x] Revert wrong server-side statusFilter bypass (Round 21 was wrong)
+- [x] Fix: statusFilter is always passed to server; when user changes statusFilter, re-fetch from server
+- [x] Pass statusFilter to fetchMyInvolvedIssues JQL so involvement query also respects status
+- [x] Remove client-side status filter hack from filtered useMemo
