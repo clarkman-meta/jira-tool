@@ -16,7 +16,7 @@ import {
   addHiddenIssue,
   removeHiddenIssue,
 } from "./db";
-import { fetchOpenIssues, fetchSingleIssue, fetchMyInvolvedIssues, validateJiraCredentials } from "./jira";
+import { fetchOpenIssues, fetchSingleIssue, fetchMyInvolvedIssues, enrichWithCommentInvolvement, validateJiraCredentials } from "./jira";
 
 // Seed default projects on startup
 seedDefaultProjects().catch((e) => console.warn("[DB] Seed failed:", e));
@@ -182,16 +182,18 @@ export const appRouter = router({
           }
 
           // If myIssues mode is requested, filter to only issues where the user has involvement
-          // (assignee OR reporter OR watcher OR commenter)
+          // (assignee OR reporter OR watcher OR commenter/mentioned)
           if (input.myIssues) {
             const myAccountId = process.env.JIRA_MY_ACCOUNT_ID ?? "";
-            // JIRA_EMAIL is like clarkman@meta.com — extract the username part for comment search
             const jiraEmail = process.env.JIRA_EMAIL ?? "";
             const username = jiraEmail.includes("@") ? jiraEmail.split("@")[0] : jiraEmail;
 
             if (myAccountId) {
-              // Fetch the set of issue keys where the user has any involvement
+              // Step 1: JQL-based involvement (assignee / reporter / watcher)
               const involvedKeys = await fetchMyInvolvedIssues(myAccountId, username, input.projectKey);
+              // Step 2: Enrich with commenter / mentioned detection via batch comment API
+              const candidateKeys = issues.map((i) => i.key);
+              await enrichWithCommentInvolvement(candidateKeys, myAccountId, involvedKeys);
               // Keep only issues that appear in the involved set
               issues = issues.filter((issue) => involvedKeys.has(issue.key));
             }

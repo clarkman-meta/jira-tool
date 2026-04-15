@@ -147,3 +147,10 @@
 - [x] Request Browser Notification permission when auto-refresh is enabled
 - [x] Show browser notification when tab is hidden and changes detected
 - [x] Show toast notifications for changes regardless of tab focus
+
+## Round 20 - Precise Commenter/Mentioned Detection
+- [x] Add adfHasMention() helper in server/jira.ts to recursively check ADF nodes for accountId mention
+- [x] Add fetchCommentInvolvement() in server/jira.ts: batch-fetches comments for a list of issue keys, checks author.accountId and ADF mention nodes (concurrency=8)
+- [x] Add enrichWithCommentInvolvement() exported function: given candidate issue keys, adds commenter/mentioned issues to the involvedKeys set
+- [x] Update fetchMyInvolvedIssues() to remove comment ~ JQL (imprecise text search) — now only uses assignee/reporter/watcher JQL
+- [x] Update routers.ts jira.issues: after JQL involvement, call enrichWithCommentInvolvement() for precise commenter/mentioned detection

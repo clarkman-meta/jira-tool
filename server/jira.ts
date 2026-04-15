@@ -43,6 +43,21 @@ function adfToText(node: unknown, depth = 0): string {
   return "";
 }
 
+// ─── ADF: check if a node contains a mention of a specific accountId ──────────
+
+function adfHasMention(node: unknown, accountId: string): boolean {
+  if (!node || typeof node !== "object") return false;
+  const n = node as Record<string, unknown>;
+  if (n.type === "mention" && n.attrs && typeof n.attrs === "object") {
+    const attrs = n.attrs as Record<string, unknown>;
+    if (attrs.id === accountId) return true;
+  }
+  if (Array.isArray(n.content)) {
+    return (n.content as unknown[]).some((c) => adfHasMention(c, accountId));
+  }
+  return false;
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface JiraIssue {
@@ -202,20 +217,60 @@ export async function fetchOpenIssues(
   return allIssues;
 }
 
-// ─── Fetch issues where the user has ANY involvement ─────────────────────────
-// Uses: assignee OR reporter OR watcher OR comment
-// The `comment ~` operator searches comment text, matching the user's username.
+/// ─── Batch-check comments for a list of issue keys ───────────────────────────
+// Returns a Set of issue keys where the user is a commenter OR was mentioned.
+// Concurrency-limited to avoid hammering the Jira API.
+async function fetchCommentInvolvement(
+  issueKeys: string[],
+  accountId: string,
+  concurrency = 8,
+): Promise<Set<string>> {
+  const involved = new Set<string>();
+  // Process in batches of `concurrency`
+  for (let i = 0; i < issueKeys.length; i += concurrency) {
+    const batch = issueKeys.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (key) => {
+        try {
+          // Fetch all comments for this issue (maxResults=100 is usually enough)
+          const resp = await jiraClient.get(`/rest/api/3/issue/${key}/comment`, {
+            params: { maxResults: 100, orderBy: "-created" },
+          });
+          const data = resp.data as { comments: unknown[] };
+          for (const raw of data.comments ?? []) {
+            const c = raw as Record<string, unknown>;
+            // Check if user is the comment author
+            const author = c.author as Record<string, unknown> | null;
+            if (author?.accountId === accountId) {
+              involved.add(key);
+              return; // no need to check further comments for this issue
+            }
+            // Check if user is mentioned in the ADF body
+            if (c.body && adfHasMention(c.body, accountId)) {
+              involved.add(key);
+              return;
+            }
+          }
+        } catch {
+          // Ignore errors for individual issues (e.g. permission denied)
+        }
+      })
+    );
+  }
+  return involved;
+}
 
+// ─── Fetch issues where the user has ANY involvement ─────────────────────────
+// Uses: assignee OR reporter OR watcher (via JQL) PLUS commenter/mentioned
+// (via batch comment fetching for precise accountId matching).
 export async function fetchMyInvolvedIssues(
   accountId: string,
-  username: string,
+  _username: string,
   projectKey?: string,
 ): Promise<Set<string>> {
-  // Build JQL: involvement across the whole instance (or scoped to a project)
+  // Build JQL: assignee OR reporter OR watcher (no comment ~ — we handle that separately)
   const projectClause = projectKey ? `project = ${projectKey} AND ` : "";
-  // No status restriction here — the statusFilter on fetchOpenIssues controls which statuses are fetched.
-  // We need involvement across ALL statuses so the intersection works correctly for Closed/Done issues too.
-  const jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}" OR comment ~ "${username}")`;
+  const jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}")`;
 
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50;
@@ -242,6 +297,23 @@ export async function fetchMyInvolvedIssues(
     pageCount++;
   } while (nextPageToken && pageCount < MAX_PAGES);
 
+  return involvedKeys;
+}
+
+// ─── Enrich involvement set with commenter/mentioned issues ──────────────────
+// Given a list of candidate issue keys (from fetchOpenIssues), check each one
+// for comments authored by or mentioning the user. Merges results into the
+// existing involvedKeys set in-place and returns it.
+export async function enrichWithCommentInvolvement(
+  candidateKeys: string[],
+  accountId: string,
+  involvedKeys: Set<string>,
+): Promise<Set<string>> {
+  // Only check issues not already in the involved set
+  const toCheck = candidateKeys.filter((k) => !involvedKeys.has(k));
+  if (toCheck.length === 0) return involvedKeys;
+  const commentInvolved = await fetchCommentInvolvement(toCheck, accountId);
+  Array.from(commentInvolved).forEach((key) => involvedKeys.add(key));
   return involvedKeys;
 }
 

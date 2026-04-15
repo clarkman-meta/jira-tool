@@ -12,7 +12,7 @@ vi.mock("axios", () => ({
   },
 }));
 
-import { fetchOpenIssues, validateJiraCredentials } from "./jira";
+import { fetchOpenIssues, validateJiraCredentials, enrichWithCommentInvolvement } from "./jira";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -169,5 +169,99 @@ describe("validateJiraCredentials", () => {
     mockGet.mockRejectedValueOnce(new Error("401 Unauthorized"));
     const result = await validateJiraCredentials();
     expect(result).toBe(false);
+  });
+});
+
+// ─── enrichWithCommentInvolvement tests ───────────────────────────────────────
+
+describe("enrichWithCommentInvolvement", () => {
+  const MY_ACCOUNT_ID = "712020:f04ded31-3e91-47eb-bad9-d5e624e2b95f";
+
+  beforeEach(() => {
+    mockGet.mockReset();
+    mockPost.mockReset();
+  });
+
+  it("adds issue key when user is the comment author", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: {
+        comments: [
+          {
+            author: { accountId: MY_ACCOUNT_ID },
+            body: { type: "doc", version: 1, content: [] },
+          },
+        ],
+      },
+    });
+    const involvedKeys = new Set<string>();
+    await enrichWithCommentInvolvement(["DGTK-100"], MY_ACCOUNT_ID, involvedKeys);
+    expect(involvedKeys.has("DGTK-100")).toBe(true);
+  });
+
+  it("adds issue key when user is mentioned in ADF body", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: {
+        comments: [
+          {
+            author: { accountId: "other-user" },
+            body: {
+              type: "doc",
+              version: 1,
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    { type: "text", text: "Hey " },
+                    {
+                      type: "mention",
+                      attrs: { id: MY_ACCOUNT_ID, text: "@Clark" },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const involvedKeys = new Set<string>();
+    await enrichWithCommentInvolvement(["DGTK-200"], MY_ACCOUNT_ID, involvedKeys);
+    expect(involvedKeys.has("DGTK-200")).toBe(true);
+  });
+
+  it("does not add issue key when user is not involved in comments", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: {
+        comments: [
+          {
+            author: { accountId: "other-user" },
+            body: {
+              type: "doc",
+              version: 1,
+              content: [{ type: "paragraph", content: [{ type: "text", text: "No mention here" }] }],
+            },
+          },
+        ],
+      },
+    });
+    const involvedKeys = new Set<string>();
+    await enrichWithCommentInvolvement(["DGTK-300"], MY_ACCOUNT_ID, involvedKeys);
+    expect(involvedKeys.has("DGTK-300")).toBe(false);
+  });
+
+  it("skips issues already in involvedKeys without calling API", async () => {
+    const involvedKeys = new Set<string>(["DGTK-400"]);
+    await enrichWithCommentInvolvement(["DGTK-400"], MY_ACCOUNT_ID, involvedKeys);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(involvedKeys.has("DGTK-400")).toBe(true);
+  });
+
+  it("handles API errors gracefully (does not throw)", async () => {
+    mockGet.mockRejectedValueOnce(new Error("403 Forbidden"));
+    const involvedKeys = new Set<string>();
+    await expect(
+      enrichWithCommentInvolvement(["DGTK-500"], MY_ACCOUNT_ID, involvedKeys)
+    ).resolves.not.toThrow();
+    expect(involvedKeys.has("DGTK-500")).toBe(false);
   });
 });
