@@ -16,7 +16,7 @@ import {
   addHiddenIssue,
   removeHiddenIssue,
 } from "./db";
-import { fetchOpenIssues, fetchMyInvolvedIssues, enrichWithCommentInvolvement, fetchIssuesByKeys, fetchSingleIssue, validateJiraCredentials } from "./jira";
+import { fetchOpenIssues, enrichWithCommentInvolvement, fetchSingleIssue, validateJiraCredentials } from "./jira";
 
 // Seed default projects on startup
 seedDefaultProjects().catch((e) => console.warn("[DB] Seed failed:", e));
@@ -184,23 +184,13 @@ export const appRouter = router({
               stageKeyword: input.stageKeyword.trim() || null,
               // My Issues: inject involvement JQL so Jira filters assignee/reporter/comment at source
               myAccountId: myAccountId || null,
+              // titleFilter: injected as summary ~ JQL clause (server-side, only for non-customJql projects)
+              titleFilter: titleFilter || null,
             },
           );
 
-          // Apply titleFilter only when no customJql is set
+          // All filtering is now server-side; no post-fetch filtering needed
           let issues = allIssues;
-          if (!customJql && titleFilter) {
-            const keywords = titleFilter
-              .split(",")
-              .map((k) => k.trim().toLowerCase())
-              .filter(Boolean);
-            if (keywords.length > 0) {
-              issues = allIssues.filter((issue) => {
-                const title = issue.summary.toLowerCase();
-                return keywords.some((kw) => title.includes(kw));
-              });
-            }
-          }
 
           // My Issues: Jira has already filtered by (assignee OR reporter OR comment ~) via JQL.
           // All fetched issues are involvement candidates. Now do precise comment verification:

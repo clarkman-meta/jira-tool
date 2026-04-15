@@ -206,6 +206,29 @@ describe("fetchOpenIssues", () => {
     expect(callArgs[1].jql).toContain("status IN");
     expect(callArgs[1].jql).toContain("Triage");
   });
+
+  it("appends summary ~ clause for single titleFilter keyword", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, null, { titleFilter: "[P2]" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain('summary ~ "[P2]"');
+  });
+
+  it("appends OR-joined summary ~ clauses for multiple titleFilter keywords", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, null, { titleFilter: "[P2], [P1]" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain('summary ~ "[P2]" OR summary ~ "[P1]"');
+  });
+
+  it("does NOT append titleFilter clause when customJql is set", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    const customJql = "project = DGTK AND parent = DGTK-234 ORDER BY updated DESC";
+    await fetchOpenIssues("DGTK", 100, null, customJql, null, { titleFilter: "[P2]" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    // customJql projects manage their own summary filter; titleFilter should be ignored
+    expect(callArgs[1].jql).not.toContain('summary ~ "[P2]"');
+  });
 });
 
 describe("validateJiraCredentials", () => {

@@ -201,3 +201,12 @@
 - [x] Remove fetchMyInvolvedIssues dependency from My Issues flow (no longer needed)
 - [x] Response time improved: ~14s → ~4s → ~4s (with 16 issues) → ~4s (with 1 issue via full JQL)
 - [x] All 22 tests pass
+
+## Round 27 - Clean Up Dead Code & titleFilter JQL Migration
+- [x] Delete fetchMyInvolvedIssues from server/jira.ts (no longer called after Round 26)
+- [x] Delete fetchIssuesByKeys from server/jira.ts (no longer called after Round 26)
+- [x] Remove unused imports in routers.ts (fetchMyInvolvedIssues, fetchIssuesByKeys)
+- [x] Move titleFilter from Node.js post-fetch filter to JQL summary ~ clause in fetchOpenIssues
+- [x] Remove post-fetch titleFilter logic from routers.ts
+- [x] Add titleFilter param to FetchOpenIssuesOptions and pass from routers.ts
+- [x] Update tests to cover titleFilter JQL clause (3 new tests, 25 total)

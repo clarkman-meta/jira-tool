@@ -218,6 +218,7 @@ export interface FetchOpenIssuesOptions {
   updatedWithinDays?: number | null;    // e.g. 30 → updated >= -30d
   stageKeyword?: string | null;         // e.g. "EVT" → summary ~ "EVT"
   myAccountId?: string | null;          // when set, adds involvement JQL clause
+  titleFilter?: string | null;          // comma-separated keywords → summary ~ "kw1" OR summary ~ "kw2"
 }
 
 export async function fetchOpenIssues(
@@ -238,6 +239,7 @@ export async function fetchOpenIssues(
     updatedWithinDays: opts?.updatedWithinDays,
     stageKeyword: opts?.stageKeyword,
     myAccountId: opts?.myAccountId,
+    titleFilter: opts?.titleFilter,
   };
 
   // ── Build JQL base (without ORDER BY) ──
@@ -295,6 +297,16 @@ export async function fetchOpenIssues(
   // Stage / keyword filter (summary contains)
   if (effectiveOpts.stageKeyword && effectiveOpts.stageKeyword.trim()) {
     jqlBase += ` AND summary ~ "${effectiveOpts.stageKeyword.trim()}"`;
+  }
+
+  // Title filter: comma-separated keywords → summary ~ "kw1" OR summary ~ "kw2"
+  // Only applied when no customJql is set (customJql projects already have their own summary filter)
+  if (!effectiveOpts.customJql && effectiveOpts.titleFilter && effectiveOpts.titleFilter.trim()) {
+    const kws = effectiveOpts.titleFilter.split(",").map((k) => k.trim()).filter(Boolean);
+    if (kws.length > 0) {
+      const clause = kws.map((k) => `summary ~ "${k}"`).join(" OR ");
+      jqlBase += ` AND (${clause})`;
+    }
   }
 
   // My Issues involvement filter: assignee OR reporter OR comment mention
@@ -378,59 +390,6 @@ async function fetchCommentInvolvement(
   return involved;
 }
 
-// ─── Fetch issues where the user has ANY involvement ─────────────────────────
-// Uses: assignee OR reporter OR watcher (via JQL) PLUS commenter/mentioned
-// (via batch comment fetching for precise accountId matching).
-export async function fetchMyInvolvedIssues(
-  accountId: string,
-  _username: string,
-  projectKey?: string,
-  statusFilter?: string[],
-): Promise<Set<string>> {
-  const projectClause = projectKey ? `project = ${projectKey} AND ` : "";
-  const statusClause = (statusFilter && statusFilter.length > 0)
-    ? ` AND status IN (${statusFilter.map((s) => `"${s}"`).join(", ")})`
-    : "";
-
-  // Two JQL queries run in parallel:
-  // 1. assignee / reporter / watcher (precise)
-  // 2. comment ~ accountId (full-text, used as candidate set for later precise verification)
-  const jqlDirect = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}")${statusClause}`;
-  const jqlComment = `${projectClause}comment ~ "${accountId}"${statusClause}`;
-
-  const PAGE_SIZE = 100;
-  const MAX_PAGES = 50;
-  const involvedKeys = new Set<string>();
-  // commentCandidates: issues found via comment ~ (need precise verification later)
-  const commentCandidates = new Set<string>();
-
-  async function fetchAllKeys(jql: string, targetSet: Set<string>): Promise<void> {
-    let nextPageToken: string | undefined = undefined;
-    let pageCount = 0;
-    do {
-      const body: Record<string, unknown> = { jql, maxResults: PAGE_SIZE, fields: ["summary"] };
-      if (nextPageToken) body.nextPageToken = nextPageToken;
-      const response = await jiraClient.post("/rest/api/3/search/jql", body);
-      const data = response.data as { issues: { key: string }[]; nextPageToken?: string; isLast?: boolean };
-      for (const issue of data.issues ?? []) targetSet.add(issue.key);
-      nextPageToken = (data.isLast === false && data.nextPageToken) ? data.nextPageToken : undefined;
-      pageCount++;
-    } while (nextPageToken && pageCount < MAX_PAGES);
-  }
-
-  // Run both queries in parallel
-  await Promise.all([
-    fetchAllKeys(jqlDirect, involvedKeys),
-    fetchAllKeys(jqlComment, commentCandidates),
-  ]);
-
-  // Add comment candidates to involvedKeys so routers.ts can fetch + verify them
-  // (enrichWithCommentInvolvement will do precise accountId verification)
-  Array.from(commentCandidates).forEach((key) => involvedKeys.add(key));
-
-  return involvedKeys;
-}
-
 // ─── Enrich involvement set with commenter/mentioned issues ──────────────────
 // Given a list of candidate issue keys (from fetchOpenIssues), check each one
 // for comments authored by or mentioning the user. Merges results into the
@@ -446,23 +405,6 @@ export async function enrichWithCommentInvolvement(
   const commentInvolved = await fetchCommentInvolvement(toCheck, accountId);
   Array.from(commentInvolved).forEach((key) => involvedKeys.add(key));
   return involvedKeys;
-}
-
-// ─── Fetch multiple issues by keys (for My Issues: fetch involved keys not in allIssues) ──────────
-
-export async function fetchIssuesByKeys(issueKeys: string[]): Promise<JiraIssue[]> {
-  if (issueKeys.length === 0) return [];
-  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433", "labels"];
-  // Use JQL with issue key list — more efficient than N individual requests
-  const keyList = issueKeys.map((k) => `"${k}"`).join(", ");
-  const jql = `issueKey IN (${keyList})`;
-  const response = await jiraClient.post("/rest/api/3/search/jql", {
-    jql,
-    maxResults: issueKeys.length,
-    fields,
-  });
-  const data = response.data as { issues: unknown[] };
-  return (data.issues ?? []).map((raw) => mapIssue(raw, JIRA_BASE_URL));
 }
 
 // ─── Fetch a single issue by key ─────────────────────────────────────────────
