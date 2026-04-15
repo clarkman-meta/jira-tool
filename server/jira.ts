@@ -217,7 +217,11 @@ export interface FetchOpenIssuesOptions {
   priorityFilter?: string[] | null;     // e.g. ["p0", "p1"] (UI notation)
   updatedWithinDays?: number | null;    // e.g. 30 → updated >= -30d
   stageKeyword?: string | null;         // e.g. "EVT" → summary ~ "EVT"
-  myAccountId?: string | null;          // when set, adds involvement JQL clause
+  myAccountId?: string | null;          // when set with involvementMode, adds JQL clause
+  involvementMode?: "confirmed" | "unconfirmed" | null;
+  // "confirmed"   → AND (assignee = me OR reporter = me OR watcher = me)
+  // "unconfirmed" → AND NOT (assignee = me OR reporter = me OR watcher = me)
+  // null/undefined → no involvement clause (fetch all)
   titleFilter?: string | null;          // comma-separated keywords → summary ~ "kw1" OR summary ~ "kw2"
 }
 
@@ -239,6 +243,7 @@ export async function fetchOpenIssues(
     updatedWithinDays: opts?.updatedWithinDays,
     stageKeyword: opts?.stageKeyword,
     myAccountId: opts?.myAccountId,
+    involvementMode: opts?.involvementMode,
     titleFilter: opts?.titleFilter,
   };
 
@@ -309,11 +314,35 @@ export async function fetchOpenIssues(
     }
   }
 
-  // My Issues involvement filter: assignee OR reporter OR comment mention
-  // comment ~ is full-text (may have false positives); precise verification done after fetch
-  if (effectiveOpts.myAccountId) {
-    const aid = effectiveOpts.myAccountId;
-    jqlBase += ` AND (assignee = "${aid}" OR reporter = "${aid}" OR comment ~ "${aid}")`;
+  // My Issues involvement filter (two-query strategy):
+  // Query A (involvementMode="confirmed"):
+  //   AND (assignee = accountId OR reporter = accountId OR watcher = accountId)
+  //   → Jira server confirms involvement directly, 0 comment API calls needed.
+  // Query B (involvementMode="unconfirmed"):
+  //   AND NOT (assignee = accountId OR reporter = accountId)
+  //   AND (watcher is EMPTY OR NOT watcher = accountId)
+  //   → Issues where Clark is NOT assignee/reporter AND is NOT a watcher.
+  //
+  //   WHY THIS FORM FOR WATCHER:
+  //   Jira Cloud treats `watcher` as a multi-value field. `NOT watcher = X` only matches issues
+  //   that HAVE at least one watcher AND that watcher is not X. Issues with 0 watchers are
+  //   silently excluded by `NOT watcher = X`. The correct form is:
+  //     (watcher is EMPTY OR NOT watcher = X)
+  //   which explicitly includes the 0-watcher case.
+  //   Verified: base=100 issues, watcher is EMPTY=71 issues, NOT watcher=30 issues (71+30=101 overlap=1).
+  //
+  // NOTE: "comment author" cannot be queried via JQL in Jira Cloud (no ScriptRunner).
+  //   comment ~ accountId searches body TEXT, not ADF node accountId — unreliable.
+  //   Therefore comment authorship must be verified via comment API scan (routers.ts).
+  if (effectiveOpts.myAccountId && effectiveOpts.involvementMode) {
+    const id = effectiveOpts.myAccountId;
+    if (effectiveOpts.involvementMode === "confirmed") {
+      // Query A: confirmed involvement via assignee, reporter, or watcher
+      jqlBase += ` AND (assignee = "${id}" OR reporter = "${id}" OR watcher = "${id}")`;
+    } else if (effectiveOpts.involvementMode === "unconfirmed") {
+      // Query B: not assignee/reporter AND not watcher (using EMPTY-safe form)
+      jqlBase += ` AND NOT (assignee = "${id}" OR reporter = "${id}") AND (watcher is EMPTY OR NOT watcher = "${id}")`;
+    }
   }
 
   // Re-attach ORDER BY at the very end
@@ -349,33 +378,29 @@ export async function fetchOpenIssues(
 
 /// ─── Batch-check comments for a list of issue keys ───────────────────────────
 // Returns a Set of issue keys where the user is a commenter OR was mentioned.
-// Concurrency-limited to avoid hammering the Jira API.
+// Concurrency-limited (default 8) to avoid hammering the Jira API.
 async function fetchCommentInvolvement(
   issueKeys: string[],
   accountId: string,
   concurrency = 8,
 ): Promise<Set<string>> {
   const involved = new Set<string>();
-  // Process in batches of `concurrency`
   for (let i = 0; i < issueKeys.length; i += concurrency) {
     const batch = issueKeys.slice(i, i + concurrency);
     await Promise.all(
       batch.map(async (key) => {
         try {
-          // Fetch all comments for this issue (maxResults=100 is usually enough)
           const resp = await jiraClient.get(`/rest/api/3/issue/${key}/comment`, {
             params: { maxResults: 100, orderBy: "-created" },
           });
           const data = resp.data as { comments: unknown[] };
           for (const raw of data.comments ?? []) {
             const c = raw as Record<string, unknown>;
-            // Check if user is the comment author
             const author = c.author as Record<string, unknown> | null;
             if (author?.accountId === accountId) {
               involved.add(key);
-              return; // no need to check further comments for this issue
+              return;
             }
-            // Check if user is mentioned in the ADF body
             if (c.body && adfHasMention(c.body, accountId)) {
               involved.add(key);
               return;
@@ -391,15 +416,13 @@ async function fetchCommentInvolvement(
 }
 
 // ─── Enrich involvement set with commenter/mentioned issues ──────────────────
-// Given a list of candidate issue keys (from fetchOpenIssues), check each one
-// for comments authored by or mentioning the user. Merges results into the
-// existing involvedKeys set in-place and returns it.
+// Given a list of candidate issue keys, check each one for comments authored by
+// or mentioning the user. Merges results into involvedKeys in-place and returns it.
 export async function enrichWithCommentInvolvement(
   candidateKeys: string[],
   accountId: string,
   involvedKeys: Set<string>,
 ): Promise<Set<string>> {
-  // Only check issues not already in the involved set
   const toCheck = candidateKeys.filter((k) => !involvedKeys.has(k));
   if (toCheck.length === 0) return involvedKeys;
   const commentInvolved = await fetchCommentInvolvement(toCheck, accountId);

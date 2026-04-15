@@ -207,6 +207,55 @@ describe("fetchOpenIssues", () => {
     expect(callArgs[1].jql).toContain("Triage");
   });
 
+  it("Query A: uses assignee/reporter/watcher OR clause for confirmed involvement", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    const accountId = "user-abc-123";
+    await fetchOpenIssues("DGTK", 100, null, null, null, { myAccountId: accountId, involvementMode: "confirmed" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    const jql = callArgs[1].jql as string;
+    // Must include all three: assignee, reporter, watcher
+    expect(jql).toContain(`assignee = "${accountId}"`);
+    expect(jql).toContain(`reporter = "${accountId}"`);
+    expect(jql).toContain(`watcher = "${accountId}"`);
+    // Must be an OR clause (not AND)
+    expect(jql).toContain("OR");
+    // Must NOT use NOT watcher (that's Query B's job)
+    expect(jql).not.toContain("NOT watcher");
+    expect(jql).not.toContain("watcher is EMPTY");
+  });
+
+  it("Query B: uses NOT (assignee OR reporter) AND (watcher is EMPTY OR NOT watcher) for unconfirmed", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    const accountId = "user-abc-123";
+    await fetchOpenIssues("DGTK", 100, null, null, null, { myAccountId: accountId, involvementMode: "unconfirmed" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    const jql = callArgs[1].jql as string;
+    // Must exclude assignee and reporter via NOT
+    expect(jql).toContain(`NOT (assignee = "${accountId}" OR reporter = "${accountId}")`);
+    // Must use EMPTY-safe watcher exclusion (not bare NOT watcher = X)
+    expect(jql).toContain("watcher is EMPTY");
+    expect(jql).toContain(`NOT watcher = "${accountId}"`);
+    // Must NOT use bare `NOT watcher = X` without the EMPTY guard
+    // (i.e., the EMPTY OR form must be present)
+    expect(jql).toContain("(watcher is EMPTY OR NOT watcher");
+  });
+
+  it("Query B: does NOT use bare NOT watcher = X (would silently drop 0-watcher issues)", async () => {
+    // Regression test: Jira Cloud multi-value field bug
+    // `NOT watcher = X` excludes issues with 0 watchers (e.g. DGTK-3112)
+    // Correct form: (watcher is EMPTY OR NOT watcher = X)
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    const accountId = "user-abc-123";
+    await fetchOpenIssues("DGTK", 100, null, null, null, { myAccountId: accountId, involvementMode: "unconfirmed" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    const jql = callArgs[1].jql as string;
+    // The watcher exclusion must always be wrapped in the EMPTY-safe OR form
+    expect(jql).toContain("watcher is EMPTY");
+    // Must not appear as a standalone AND NOT watcher clause without the EMPTY guard
+    const bareNotWatcher = /AND NOT watcher = "[^"]+"(?!\))/;
+    expect(jql).not.toMatch(bareNotWatcher);
+  });
+
   it("appends summary ~ clause for single titleFilter keyword", async () => {
     mockPost.mockResolvedValueOnce({ data: { issues: [] } });
     await fetchOpenIssues("DGTK", 100, null, null, null, { titleFilter: "[P2]" });

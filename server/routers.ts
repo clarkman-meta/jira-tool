@@ -16,7 +16,7 @@ import {
   addHiddenIssue,
   removeHiddenIssue,
 } from "./db";
-import { fetchOpenIssues, enrichWithCommentInvolvement, fetchSingleIssue, validateJiraCredentials } from "./jira";
+import { fetchOpenIssues, enrichWithCommentInvolvement, fetchSingleIssue, validateJiraCredentials, type JiraIssue } from "./jira";
 
 // Seed default projects on startup
 seedDefaultProjects().catch((e) => console.warn("[DB] Seed failed:", e));
@@ -171,54 +171,65 @@ export const appRouter = router({
           // When user changes statusFilter (e.g. adds Closed), tRPC re-fetches automatically.
           const effectiveStatusFilter = input.statusFilter.length > 0 ? input.statusFilter : null;
           const myAccountId = input.myIssues ? (process.env.JIRA_MY_ACCOUNT_ID ?? "") : "";
-          const allIssues = await fetchOpenIssues(
-            input.projectKey,
-            input.maxResults,
-            issueTypeFilter,
-            customJql,
-            effectiveStatusFilter,
-            {
-              labelsFilter: input.labelsFilter.length > 0 ? input.labelsFilter : null,
-              priorityFilter: input.priorityFilter.length > 0 ? input.priorityFilter : null,
-              updatedWithinDays: input.updatedWithinDays > 0 ? input.updatedWithinDays : null,
-              stageKeyword: input.stageKeyword.trim() || null,
-              // My Issues: inject involvement JQL so Jira filters assignee/reporter/comment at source
-              myAccountId: myAccountId || null,
-              // titleFilter: injected as summary ~ JQL clause (server-side, only for non-customJql projects)
-              titleFilter: titleFilter || null,
-            },
-          );
 
-          // All filtering is now server-side; no post-fetch filtering needed
-          let issues = allIssues;
+          // Shared opts for both queries
+          const sharedOpts = {
+            labelsFilter: input.labelsFilter.length > 0 ? input.labelsFilter : null,
+            priorityFilter: input.priorityFilter.length > 0 ? input.priorityFilter : null,
+            updatedWithinDays: input.updatedWithinDays > 0 ? input.updatedWithinDays : null,
+            stageKeyword: input.stageKeyword.trim() || null,
+            titleFilter: titleFilter || null,
+          };
 
-          // My Issues: Jira has already filtered by (assignee OR reporter OR comment ~) via JQL.
-          // All fetched issues are involvement candidates. Now do precise comment verification:
-          // - assignee/reporter are confirmed (no false positives) — skip comment scan
-          // - comment ~ is full-text (may have false positives) — verify via comment API
+          let issues: JiraIssue[];
+
           if (input.myIssues && myAccountId) {
-            const involvedKeys = new Set<string>();
-            const needCommentScan: string[] = [];
+            // Two-query My Issues strategy:
+            // Query A: issues where Jira confirms involvement (assignee/reporter/watcher)
+            //          → 0 comment API calls needed
+            // Query B: issues where Jira has NO confirmed involvement
+            //          → comment scan to find comment authors/mentions
+            // This minimises comment API calls: only non-assignee/reporter/watcher issues need scanning.
+            const [confirmedIssues, unconfirmedIssues] = await Promise.all([
+              fetchOpenIssues(
+                input.projectKey, input.maxResults, issueTypeFilter, customJql, effectiveStatusFilter,
+                { ...sharedOpts, myAccountId, involvementMode: "confirmed" },
+              ),
+              fetchOpenIssues(
+                input.projectKey, input.maxResults, issueTypeFilter, customJql, effectiveStatusFilter,
+                { ...sharedOpts, myAccountId, involvementMode: "unconfirmed" },
+              ),
+            ]);
 
-            // Single pass: bucket issues by whether they need comment verification
-            for (const issue of issues) {
-              if (
-                issue.assigneeId === myAccountId ||
-                issue.reporterId === myAccountId
-              ) {
-                involvedKeys.add(issue.key); // confirmed via assignee/reporter — no API call needed
-              } else {
-                needCommentScan.push(issue.key); // came via comment ~ JQL — needs precise verification
-              }
+            // Two-query My Issues strategy:
+            // Query A: assignee/reporter/watcher confirmed — no comment scan needed.
+            // Query B: NOT assignee/reporter AND (watcher is EMPTY OR NOT watcher = me)
+            //          — guaranteed non-overlapping with Query A (verified: 0 overlap in testing).
+            //          Comment scan runs only on this smaller set to find commenter/mentioned.
+            //
+            // WHY Query B uses (watcher is EMPTY OR NOT watcher = X):
+            // Jira Cloud `NOT watcher = X` only matches issues with at least one watcher where
+            // that watcher is not X. Issues with 0 watchers are silently excluded. The EMPTY-safe
+            // form `(watcher is EMPTY OR NOT watcher = X)` correctly includes 0-watcher issues.
+            const involvedKeys = new Set(confirmedIssues.map((i) => i.key));
+
+            if (unconfirmedIssues.length > 0) {
+              await enrichWithCommentInvolvement(
+                unconfirmedIssues.map((i) => i.key),
+                myAccountId,
+                involvedKeys,
+              );
             }
 
-            // Precise comment scan only for the comment ~ candidates
-            if (needCommentScan.length > 0) {
-              await enrichWithCommentInvolvement(needCommentScan, myAccountId, involvedKeys);
-            }
-
-            // Keep only confirmed involved issues
-            issues = issues.filter((issue) => involvedKeys.has(issue.key));
+            // Merge: confirmed + comment-involved from unconfirmed set
+            const commentInvolvedUnconfirmed = unconfirmedIssues.filter((i) => involvedKeys.has(i.key));
+            issues = [...confirmedIssues, ...commentInvolvedUnconfirmed];
+          } else {
+            // Normal mode: single query, no involvement filtering
+            issues = await fetchOpenIssues(
+              input.projectKey, input.maxResults, issueTypeFilter, customJql, effectiveStatusFilter,
+              sharedOpts,
+            );
           }
 
           return { issues, error: null };
