@@ -194,3 +194,10 @@
 - [x] Frontend: pass labelsFilter, priorityFilter, updatedWithinDays, stageKeyword to tRPC query
 - [x] Frontend: remove client-side filtering for labels, priority, time, stage keyword
 - [ ] Verify DGTK-3112 appears in My Issues (Closed + SW label) with reduced dataset
+
+## Round 26 - My Issues involvement JQL optimization
+- [x] Add myAccountId to FetchOpenIssuesOptions and inject involvement JQL (assignee OR reporter OR comment ~) into fetchOpenIssues
+- [x] Refactor routers.ts My Issues block: single-pass bucket, only comment-scan non-assignee/reporter issues
+- [x] Remove fetchMyInvolvedIssues dependency from My Issues flow (no longer needed)
+- [x] Response time improved: ~14s → ~4s → ~4s (with 16 issues) → ~4s (with 1 issue via full JQL)
+- [x] All 22 tests pass

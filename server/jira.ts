@@ -167,6 +167,15 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
 // When the user provides an explicit statusFilter, we must remove any conflicting
 // hardcoded clauses from customJql so the user-controlled filter wins.
 
+// Extract ORDER BY clause from JQL, returning [jqlWithoutOrderBy, orderByClause]
+function extractOrderBy(jql: string): [string, string] {
+  const match = jql.match(/(.*?)\s*(ORDER\s+BY\s+[\s\S]+)$/i);
+  if (match) {
+    return [match[1].trim(), match[2].trim()];
+  }
+  return [jql.trim(), ""];
+}
+
 function stripStatusClauses(jql: string): string {
   // Remove: statusCategory != Done  /  statusCategory != "Done"
   let result = jql.replace(/\bstatusCategory\s*!=\s*["']?Done["']?/gi, "");
@@ -178,6 +187,7 @@ function stripStatusClauses(jql: string): string {
   result = result.replace(/\bstatusCategory\s+NOT\s+IN\s*\([^)]*\)/gi, "");
   // Clean up dangling AND/OR connectors left by removal
   result = result.replace(/\bAND\s+AND\b/gi, "AND");
+  result = result.replace(/\bAND\s+ORDER\s+BY\b/gi, "ORDER BY");
   result = result.replace(/\bAND\s*$/i, "");
   result = result.replace(/^\s*AND\b/i, "");
   result = result.replace(/\bOR\s+OR\b/gi, "OR");
@@ -207,6 +217,7 @@ export interface FetchOpenIssuesOptions {
   priorityFilter?: string[] | null;     // e.g. ["p0", "p1"] (UI notation)
   updatedWithinDays?: number | null;    // e.g. 30 → updated >= -30d
   stageKeyword?: string | null;         // e.g. "EVT" → summary ~ "EVT"
+  myAccountId?: string | null;          // when set, adds involvement JQL clause
 }
 
 export async function fetchOpenIssues(
@@ -226,63 +237,75 @@ export async function fetchOpenIssues(
     priorityFilter: opts?.priorityFilter,
     updatedWithinDays: opts?.updatedWithinDays,
     stageKeyword: opts?.stageKeyword,
+    myAccountId: opts?.myAccountId,
   };
 
-  let jql: string;
+  // ── Build JQL base (without ORDER BY) ──
+  let jqlBase: string;
+  let orderBy = "ORDER BY updated DESC"; // default
+
   if (effectiveOpts.customJql && effectiveOpts.customJql.trim()) {
-    // Start with customJql, but override status clauses if statusFilter is provided
-    let base = effectiveOpts.customJql.trim();
+    // Extract ORDER BY from customJql so we can re-attach it after all filters
+    let [base, existingOrderBy] = extractOrderBy(effectiveOpts.customJql.trim());
+    if (existingOrderBy) orderBy = existingOrderBy;
+
     if (effectiveOpts.statusFilter && effectiveOpts.statusFilter.length > 0) {
-      // User-controlled status filter wins: strip hardcoded status exclusions
+      // User-controlled status filter wins: strip hardcoded status exclusions from base
       base = stripStatusClauses(base);
       const statusList = effectiveOpts.statusFilter.map((s) => `"${s}"`).join(", ");
       base += ` AND status IN (${statusList})`;
     }
-    jql = base;
+    jqlBase = base;
   } else {
-    jql = `project = ${projectKey}`;
+    jqlBase = `project = ${projectKey}`;
     if (effectiveOpts.issueTypeFilter) {
       const types = effectiveOpts.issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
       if (types.length > 0) {
         const typeList = types.map((t) => `"${t}"`).join(", ");
-        jql += ` AND issuetype IN (${typeList})`;
+        jqlBase += ` AND issuetype IN (${typeList})`;
       }
     }
     if (effectiveOpts.statusFilter && effectiveOpts.statusFilter.length > 0) {
       const statusList = effectiveOpts.statusFilter.map((s) => `"${s}"`).join(", ");
-      jql += ` AND status IN (${statusList})`;
+      jqlBase += ` AND status IN (${statusList})`;
     }
   }
 
-  // ── Apply additional server-side filters (always appended, regardless of customJql) ──
+  // ── Apply additional server-side filters (always appended before ORDER BY) ──
 
   // Labels filter
   if (effectiveOpts.labelsFilter && effectiveOpts.labelsFilter.length > 0) {
     const labelList = effectiveOpts.labelsFilter.map((l) => `"${l}"`).join(", ");
-    jql += ` AND labels IN (${labelList})`;
+    jqlBase += ` AND labels IN (${labelList})`;
   }
 
   // Priority filter (UI notation → Jira names)
   if (effectiveOpts.priorityFilter && effectiveOpts.priorityFilter.length > 0) {
     const jiraNames = effectiveOpts.priorityFilter.flatMap(normalisePriorityToJira);
     const priorityList = Array.from(new Set(jiraNames)).map((p) => `"${p}"`).join(", ");
-    jql += ` AND priority IN (${priorityList})`;
+    jqlBase += ` AND priority IN (${priorityList})`;
   }
 
   // Updated-within-days filter
+  // Jira JQL requires the relative date in quotes: updated >= "-30d"
   if (effectiveOpts.updatedWithinDays && effectiveOpts.updatedWithinDays > 0) {
-    jql += ` AND updated >= -${effectiveOpts.updatedWithinDays}d`;
+    jqlBase += ` AND updated >= "-${effectiveOpts.updatedWithinDays}d"`;
   }
 
   // Stage / keyword filter (summary contains)
   if (effectiveOpts.stageKeyword && effectiveOpts.stageKeyword.trim()) {
-    jql += ` AND summary ~ "${effectiveOpts.stageKeyword.trim()}"`;
+    jqlBase += ` AND summary ~ "${effectiveOpts.stageKeyword.trim()}"`;
   }
 
-  // Ensure ORDER BY is present
-  if (!/ORDER BY/i.test(jql)) {
-    jql += " ORDER BY updated DESC";
+  // My Issues involvement filter: assignee OR reporter OR comment mention
+  // comment ~ is full-text (may have false positives); precise verification done after fetch
+  if (effectiveOpts.myAccountId) {
+    const aid = effectiveOpts.myAccountId;
+    jqlBase += ` AND (assignee = "${aid}" OR reporter = "${aid}" OR comment ~ "${aid}")`;
   }
+
+  // Re-attach ORDER BY at the very end
+  const jql = `${jqlBase.trim()} ${orderBy}`;
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50; // safety cap: 50 × 100 = 5000 issues max
   const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433", "labels"];
@@ -290,6 +313,8 @@ export async function fetchOpenIssues(
   const allIssues: JiraIssue[] = [];
   let nextPageToken: string | undefined = undefined;
   let pageCount = 0;
+
+  console.log(`[Jira] JQL for ${projectKey}:`, jql);  // DEBUG: remove after verification
 
   do {
     const body: Record<string, unknown> = { jql, maxResults: PAGE_SIZE, fields };
@@ -306,6 +331,7 @@ export async function fetchOpenIssues(
     pageCount++;
   } while (nextPageToken && pageCount < MAX_PAGES);
 
+  console.log(`[Jira] ${projectKey}: fetched ${allIssues.length} issues (${pageCount} page(s)) with server-side filters`);  // DEBUG
   return allIssues;
 }
 

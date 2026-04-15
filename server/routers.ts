@@ -170,6 +170,7 @@ export const appRouter = router({
           // Always pass statusFilter to server — it controls what's fetched regardless of mode.
           // When user changes statusFilter (e.g. adds Closed), tRPC re-fetches automatically.
           const effectiveStatusFilter = input.statusFilter.length > 0 ? input.statusFilter : null;
+          const myAccountId = input.myIssues ? (process.env.JIRA_MY_ACCOUNT_ID ?? "") : "";
           const allIssues = await fetchOpenIssues(
             input.projectKey,
             input.maxResults,
@@ -181,6 +182,8 @@ export const appRouter = router({
               priorityFilter: input.priorityFilter.length > 0 ? input.priorityFilter : null,
               updatedWithinDays: input.updatedWithinDays > 0 ? input.updatedWithinDays : null,
               stageKeyword: input.stageKeyword.trim() || null,
+              // My Issues: inject involvement JQL so Jira filters assignee/reporter/comment at source
+              myAccountId: myAccountId || null,
             },
           );
 
@@ -199,55 +202,33 @@ export const appRouter = router({
             }
           }
 
-          // If myIssues mode is requested, filter to only issues where the user has involvement
-          // (assignee OR reporter OR watcher OR commenter/mentioned)
-          if (input.myIssues) {
-            const myAccountId = process.env.JIRA_MY_ACCOUNT_ID ?? "";
-            const jiraEmail = process.env.JIRA_EMAIL ?? "";
-            const username = jiraEmail.includes("@") ? jiraEmail.split("@")[0] : jiraEmail;
+          // My Issues: Jira has already filtered by (assignee OR reporter OR comment ~) via JQL.
+          // All fetched issues are involvement candidates. Now do precise comment verification:
+          // - assignee/reporter are confirmed (no false positives) — skip comment scan
+          // - comment ~ is full-text (may have false positives) — verify via comment API
+          if (input.myIssues && myAccountId) {
+            const involvedKeys = new Set<string>();
+            const needCommentScan: string[] = [];
 
-            if (myAccountId) {
-              // Step 1: Get all involved keys via JQL (assignee/reporter/watcher) + comment ~ accountId candidates.
-              // fetchMyInvolvedIssues runs both JQL queries in parallel and merges the results.
-              // The comment ~ accountId results are candidates that need precise verification.
-              const involvedKeys = await fetchMyInvolvedIssues(myAccountId, username, input.projectKey);
-
-              // Step 2: Build the full pool of issues to work with:
-              // - allIssues: issues already fetched by fetchOpenIssues (statusFilter-limited window)
-              // - missingIssues: issues in involvedKeys but NOT in allIssues (e.g. outside pagination window)
-              const allIssueKeySet = new Set(issues.map((i) => i.key));
-              const missingInvolvedKeys = Array.from(involvedKeys).filter((k) => !allIssueKeySet.has(k));
-              let missingIssues: typeof issues = [];
-              if (missingInvolvedKeys.length > 0) {
-                missingIssues = await fetchIssuesByKeys(missingInvolvedKeys);
+            // Single pass: bucket issues by whether they need comment verification
+            for (const issue of issues) {
+              if (
+                issue.assigneeId === myAccountId ||
+                issue.reporterId === myAccountId
+              ) {
+                involvedKeys.add(issue.key); // confirmed via assignee/reporter — no API call needed
+              } else {
+                needCommentScan.push(issue.key); // came via comment ~ JQL — needs precise verification
               }
-              const allPool = [...issues, ...missingIssues];
-
-              // Step 3: Precise comment/mention verification for ALL candidates in the pool.
-              // This handles:
-              // - Issues from comment ~ accountId JQL (full-text, may have false positives)
-              // - Issues in allIssues that might have Clark as commenter/mentioned
-              // enrichWithCommentInvolvement skips keys already confirmed as involved.
-              const allPoolKeys = allPool.map((i) => i.key);
-              await enrichWithCommentInvolvement(allPoolKeys, myAccountId, involvedKeys);
-
-              // Step 4: Keep only issues that appear in the confirmed involved set
-              let result = allPool.filter((issue) => involvedKeys.has(issue.key));
-
-              // Step 5: Apply statusFilter to the final result
-              if (effectiveStatusFilter) {
-                const statusSet = new Set(effectiveStatusFilter);
-                result = result.filter((i) => statusSet.has(i.status));
-              }
-
-              // Deduplicate by key
-              const seen = new Set<string>();
-              issues = result.filter((i) => {
-                if (seen.has(i.key)) return false;
-                seen.add(i.key);
-                return true;
-              });
             }
+
+            // Precise comment scan only for the comment ~ candidates
+            if (needCommentScan.length > 0) {
+              await enrichWithCommentInvolvement(needCommentScan, myAccountId, involvedKeys);
+            }
+
+            // Keep only confirmed involved issues
+            issues = issues.filter((issue) => involvedKeys.has(issue.key));
           }
 
           return { issues, error: null };

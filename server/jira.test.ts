@@ -175,7 +175,7 @@ describe("fetchOpenIssues", () => {
     mockPost.mockResolvedValueOnce({ data: { issues: [] } });
     await fetchOpenIssues("DGTK", 100, null, null, null, { updatedWithinDays: 30 });
     const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
-    expect(callArgs[1].jql).toContain("updated >= -30d");
+    expect(callArgs[1].jql).toContain('updated >= "-30d"');
   });
 
   it("appends summary ~ clause when stageKeyword is provided", async () => {
