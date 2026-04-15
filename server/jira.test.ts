@@ -152,6 +152,60 @@ describe("fetchOpenIssues", () => {
     const secondCallArgs = mockPost.mock.calls[1] as [string, Record<string, unknown>];
     expect(secondCallArgs[1].nextPageToken).toBe("token123");
   });
+
+  it("appends labels IN clause when labelsFilter is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, null, { labelsFilter: ["SW", "HW"] });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain("labels IN");
+    expect(callArgs[1].jql).toContain("\"SW\"");
+    expect(callArgs[1].jql).toContain("\"HW\"");
+  });
+
+  it("appends priority IN clause with Jira names when priorityFilter is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, null, { priorityFilter: ["p0", "p1"] });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain("priority IN");
+    expect(callArgs[1].jql).toContain("Highest");
+    expect(callArgs[1].jql).toContain("High");
+  });
+
+  it("appends updated >= clause when updatedWithinDays is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, null, { updatedWithinDays: 30 });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain("updated >= -30d");
+  });
+
+  it("appends summary ~ clause when stageKeyword is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    await fetchOpenIssues("DGTK", 100, null, null, null, { stageKeyword: "EVT" });
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).toContain("summary ~ \"EVT\"");
+  });
+
+  it("strips hardcoded status exclusions from customJql when statusFilter is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    const customJql = "project = DGTK AND statusCategory != Done AND issuetype = Bug ORDER BY updated DESC";
+    await fetchOpenIssues("DGTK", 100, null, customJql, ["In Progress"]);
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    // Should NOT contain the original statusCategory != Done clause
+    expect(callArgs[1].jql).not.toContain("statusCategory != Done");
+    // Should contain the user-controlled status IN clause
+    expect(callArgs[1].jql).toContain("status IN");
+    expect(callArgs[1].jql).toContain("In Progress");
+  });
+
+  it("strips status NOT IN clause from customJql when statusFilter is provided", async () => {
+    mockPost.mockResolvedValueOnce({ data: { issues: [] } });
+    const customJql = "project = DGTK AND status NOT IN (Closed, Done) ORDER BY updated DESC";
+    await fetchOpenIssues("DGTK", 100, null, customJql, ["Triage", "In Progress"]);
+    const callArgs = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(callArgs[1].jql).not.toContain("NOT IN");
+    expect(callArgs[1].jql).toContain("status IN");
+    expect(callArgs[1].jql).toContain("Triage");
+  });
 });
 
 describe("validateJiraCredentials", () => {

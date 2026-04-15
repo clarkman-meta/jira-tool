@@ -170,3 +170,27 @@
 - [x] Fix: statusFilter is always passed to server; when user changes statusFilter, re-fetch from server
 - [x] Pass statusFilter to fetchMyInvolvedIssues JQL so involvement query also respects status
 - [x] Remove client-side status filter hack from filtered useMemo
+
+## Round 23 - Click Outside to Close Filter Dropdowns
+- [x] Add click-outside handler to Status filter dropdown
+- [x] Add click-outside handler to Labels filter dropdown
+
+## Round 24 - My Issues: Paginate All Issues for Comment Scan
+- [ ] Add fetchAllIssues function that paginates through all pages (startAt offset)
+- [ ] In My Issues mode, use fetchAllIssues instead of fetchOpenIssues (limited 100)
+- [ ] Verify DGTK-3112 (position 250 out of 1525 Closed) appears in My Issues with Closed status
+
+## Round 25 - Server-side Labels Filter + customJql Status Override
+- [x] Add labelsFilter param to fetchOpenIssues and tRPC jira.issues input
+- [x] For non-customJql projects: append labels IN (...) to JQL
+- [x] For customJql projects: strip existing status conditions and inject statusFilter + labelsFilter
+- [x] Update frontend: pass labelsFilter to tRPC query (re-fetch on change), remove client-side labels filter
+- [ ] Verify DGTK-3112 appears in My Issues (Closed + SW label) with much smaller dataset
+
+## Round 25 - Move All Filters to Server-side
+- [x] Server jira.ts: add labelsFilter, priorityFilter, updatedWithinDays, stageKeyword params to fetchOpenIssues
+- [x] Server jira.ts: for customJql, strip existing status/labels conditions and inject server-controlled filters
+- [x] Server routers.ts: accept all filter params and pass to fetchOpenIssues
+- [x] Frontend: pass labelsFilter, priorityFilter, updatedWithinDays, stageKeyword to tRPC query
+- [x] Frontend: remove client-side filtering for labels, priority, time, stage keyword
+- [ ] Verify DGTK-3112 appears in My Issues (Closed + SW label) with reduced dataset

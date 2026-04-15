@@ -16,7 +16,7 @@ import {
   addHiddenIssue,
   removeHiddenIssue,
 } from "./db";
-import { fetchOpenIssues, fetchSingleIssue, fetchMyInvolvedIssues, enrichWithCommentInvolvement, validateJiraCredentials } from "./jira";
+import { fetchOpenIssues, fetchMyInvolvedIssues, enrichWithCommentInvolvement, fetchIssuesByKeys, fetchSingleIssue, validateJiraCredentials } from "./jira";
 
 // Seed default projects on startup
 seedDefaultProjects().catch((e) => console.warn("[DB] Seed failed:", e));
@@ -152,6 +152,10 @@ export const appRouter = router({
           maxResults: z.number().int().min(1).max(500).optional().default(200),
           myIssues: z.boolean().optional().default(false),
           statusFilter: z.array(z.string()).optional().default(["Triage", "In Progress"]),
+          labelsFilter: z.array(z.string()).optional().default([]),
+          priorityFilter: z.array(z.string()).optional().default([]),
+          updatedWithinDays: z.number().int().min(0).optional().default(30),
+          stageKeyword: z.string().optional().default(""),
         })
       )
       .query(async ({ input }) => {
@@ -166,7 +170,19 @@ export const appRouter = router({
           // Always pass statusFilter to server — it controls what's fetched regardless of mode.
           // When user changes statusFilter (e.g. adds Closed), tRPC re-fetches automatically.
           const effectiveStatusFilter = input.statusFilter.length > 0 ? input.statusFilter : null;
-          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql, effectiveStatusFilter);
+          const allIssues = await fetchOpenIssues(
+            input.projectKey,
+            input.maxResults,
+            issueTypeFilter,
+            customJql,
+            effectiveStatusFilter,
+            {
+              labelsFilter: input.labelsFilter.length > 0 ? input.labelsFilter : null,
+              priorityFilter: input.priorityFilter.length > 0 ? input.priorityFilter : null,
+              updatedWithinDays: input.updatedWithinDays > 0 ? input.updatedWithinDays : null,
+              stageKeyword: input.stageKeyword.trim() || null,
+            },
+          );
 
           // Apply titleFilter only when no customJql is set
           let issues = allIssues;
@@ -191,15 +207,46 @@ export const appRouter = router({
             const username = jiraEmail.includes("@") ? jiraEmail.split("@")[0] : jiraEmail;
 
             if (myAccountId) {
-              // Step 1: JQL-based involvement (assignee / reporter / watcher)
-              // Pass statusFilter so involvement JQL also respects the selected statuses
-              const involvedKeys = await fetchMyInvolvedIssues(myAccountId, username, input.projectKey, effectiveStatusFilter ?? undefined);
-              // Step 2: Enrich with commenter / mentioned detection via batch comment API
-              // candidateKeys = issues already filtered by statusFilter from fetchOpenIssues
-              const candidateKeys = issues.map((i) => i.key);
-              await enrichWithCommentInvolvement(candidateKeys, myAccountId, involvedKeys);
-              // Keep only issues that appear in the involved set
-              issues = issues.filter((issue) => involvedKeys.has(issue.key));
+              // Step 1: Get all involved keys via JQL (assignee/reporter/watcher) + comment ~ accountId candidates.
+              // fetchMyInvolvedIssues runs both JQL queries in parallel and merges the results.
+              // The comment ~ accountId results are candidates that need precise verification.
+              const involvedKeys = await fetchMyInvolvedIssues(myAccountId, username, input.projectKey);
+
+              // Step 2: Build the full pool of issues to work with:
+              // - allIssues: issues already fetched by fetchOpenIssues (statusFilter-limited window)
+              // - missingIssues: issues in involvedKeys but NOT in allIssues (e.g. outside pagination window)
+              const allIssueKeySet = new Set(issues.map((i) => i.key));
+              const missingInvolvedKeys = Array.from(involvedKeys).filter((k) => !allIssueKeySet.has(k));
+              let missingIssues: typeof issues = [];
+              if (missingInvolvedKeys.length > 0) {
+                missingIssues = await fetchIssuesByKeys(missingInvolvedKeys);
+              }
+              const allPool = [...issues, ...missingIssues];
+
+              // Step 3: Precise comment/mention verification for ALL candidates in the pool.
+              // This handles:
+              // - Issues from comment ~ accountId JQL (full-text, may have false positives)
+              // - Issues in allIssues that might have Clark as commenter/mentioned
+              // enrichWithCommentInvolvement skips keys already confirmed as involved.
+              const allPoolKeys = allPool.map((i) => i.key);
+              await enrichWithCommentInvolvement(allPoolKeys, myAccountId, involvedKeys);
+
+              // Step 4: Keep only issues that appear in the confirmed involved set
+              let result = allPool.filter((issue) => involvedKeys.has(issue.key));
+
+              // Step 5: Apply statusFilter to the final result
+              if (effectiveStatusFilter) {
+                const statusSet = new Set(effectiveStatusFilter);
+                result = result.filter((i) => statusSet.has(i.status));
+              }
+
+              // Deduplicate by key
+              const seen = new Set<string>();
+              issues = result.filter((i) => {
+                if (seen.has(i.key)) return false;
+                seen.add(i.key);
+                return true;
+              });
             }
           }
 

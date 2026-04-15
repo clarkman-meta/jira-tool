@@ -230,7 +230,12 @@ function StageFilterBar({
 function IssueTable({
   issues, loading, error, myAccountId, projectColor, projectKey, watchedKeys,
   activeProjectKey, onHideIssue, onPinIssue, myIssuesOnly, onToggleMyIssues,
-  hiddenIssues, onUnhideIssue, statusFilter, onStatusFilterChange, allStatuses
+  hiddenIssues, onUnhideIssue, statusFilter, onStatusFilterChange, allStatuses,
+  labelsFilter, onLabelsFilterChange,
+  priorityFilter, onPriorityFilterChange,
+  daysFilter, onDaysFilterChange,
+  stagePreset, onStagePresetChange,
+  stageKeyword, onStageKeywordChange,
 }: {
   issues: JiraIssue[];
   loading: boolean;
@@ -249,6 +254,16 @@ function IssueTable({
   statusFilter: Set<string>;
   onStatusFilterChange: (s: Set<string>) => void;
   allStatuses: string[];
+  labelsFilter: Set<string>;
+  onLabelsFilterChange: (s: Set<string>) => void;
+  priorityFilter: Set<string>;
+  onPriorityFilterChange: (s: Set<string>) => void;
+  daysFilter: number;
+  onDaysFilterChange: (d: number) => void;
+  stagePreset: StagePreset;
+  onStagePresetChange: (p: StagePreset) => void;
+  stageKeyword: string;
+  onStageKeywordChange: (v: string) => void;
 }) {
   // Default: priority asc first, updated desc as secondary
   const [sorts, setSorts] = useState<SortConfig[]>([
@@ -257,42 +272,46 @@ function IssueTable({
   ]);
   const sortField = sorts[0]?.field ?? "priority";
   const sortDir = sorts[0]?.dir ?? "asc";
-  const [activePreset, setActivePreset] = useState<StagePreset>("All");
   const [customKeyword, setCustomKeyword] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [pinOpen, setPinOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
-  const [daysFilter, setDaysFilter] = useState<number>(30);
-  const [daysInput, setDaysInput] = useState("30");
-  // Priority filter: null = All, otherwise a set of selected priority levels
-  const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
+  const [daysInput, setDaysInput] = useState(String(daysFilter));
   const [statusOpen, setStatusOpen] = useState(false);
-  // Labels filter: default = "SW"
-  const [labelsFilter, setLabelsFilter] = useState<Set<string>>(new Set(["SW"]));
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
+  const labelsDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Click-outside handler: close any open dropdown when user clicks outside it
+  useEffect(() => {
+    function handleMouseDown(e: MouseEvent) {
+      if (statusOpen && statusDropdownRef.current && !statusDropdownRef.current.contains(e.target as Node)) {
+        setStatusOpen(false);
+      }
+      if (labelsOpen && labelsDropdownRef.current && !labelsDropdownRef.current.contains(e.target as Node)) {
+        setLabelsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [statusOpen, labelsOpen]);
 
   const togglePriority = (p: string) => {
-    setPriorityFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(p)) next.delete(p); else next.add(p);
-      return next;
-    });
+    const next = new Set(priorityFilter);
+    if (next.has(p)) next.delete(p); else next.add(p);
+    onPriorityFilterChange(next);
   };
 
   const toggleStatus = (s: string) => {
-    onStatusFilterChange((() => {
-      const next = new Set(statusFilter);
-      if (next.has(s)) next.delete(s); else next.add(s);
-      return next;
-    })());
+    const next = new Set(statusFilter);
+    if (next.has(s)) next.delete(s); else next.add(s);
+    onStatusFilterChange(next);
   };
 
   const toggleLabel = (l: string) => {
-    setLabelsFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(l)) next.delete(l); else next.add(l);
-      return next;
-    });
+    const next = new Set(labelsFilter);
+    if (next.has(l)) next.delete(l); else next.add(l);
+    onLabelsFilterChange(next);
   };
 
   const handleSort = (field: SortField) => {
@@ -311,86 +330,21 @@ function IssueTable({
   const getEffectivePriority = (issue: JiraIssue) =>
     isKite ? (issue.build ?? issue.priority) : issue.priority;
 
-  // Effective filter keyword: preset takes priority unless custom is set
-  const effectiveKeyword = customKeyword !== "" ? customKeyword : (activePreset !== "All" ? activePreset : "");
+  // Effective filter keyword: stage preset or custom keyword (client-side only)
+  // All other filters (labels, priority, time, stage) are handled server-side via JQL
+  const effectiveKeyword = customKeyword;
 
-  const cutoffDate = useMemo(() => {
-    if (daysFilter <= 0) return null;
-    const d = new Date();
-    d.setDate(d.getDate() - daysFilter);
-    return d;
-  }, [daysFilter]);
-
-  // Helper: apply all filters EXCEPT labels (used for Status dropdown options & counts)
-  const issuesForStatusOptions = useMemo(() => {
-    return issues
-      .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
-      .filter((i) => !cutoffDate || new Date(i.updated) >= cutoffDate)
-      .filter((i) => {
-        if (priorityFilter.size === 0) return true;
-        const ep = (getEffectivePriority(i) ?? "").toLowerCase();
-        const norm =
-          ep === "highest" || ep === "blocker" ? "p0" :
-          ep === "high" ? "p1" :
-          ep === "medium" ? "p2" :
-          ep === "low" ? "p3" :
-          ep === "lowest" ? "p4" : ep;
-        return priorityFilter.has(norm);
-      });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]);
-
-  // Helper: apply all filters EXCEPT status (used for Labels dropdown options & counts)
-  const issuesForLabelsOptions = useMemo(() => {
-    return issues
-      .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
-      .filter((i) => !cutoffDate || new Date(i.updated) >= cutoffDate)
-      .filter((i) => {
-        if (priorityFilter.size === 0) return true;
-        const ep = (getEffectivePriority(i) ?? "").toLowerCase();
-        const norm =
-          ep === "highest" || ep === "blocker" ? "p0" :
-          ep === "high" ? "p1" :
-          ep === "medium" ? "p2" :
-          ep === "low" ? "p3" :
-          ep === "lowest" ? "p4" : ep;
-        return priorityFilter.has(norm);
-      });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [issues, effectiveKeyword, cutoffDate, priorityFilter, isKite]);
-
-  // Collect all unique labels — based on issues NOT filtered by status
+  // Collect all unique labels from fetched issues (for dropdown display)
   const allLabels = useMemo(() => {
     const seen = new Set<string>();
-    issuesForLabelsOptions.forEach((i) => i.labels.forEach((l) => seen.add(l)));
+    issues.forEach((i) => i.labels.forEach((l) => seen.add(l)));
     return Array.from(seen).sort();
-  }, [issuesForLabelsOptions]);
+  }, [issues]);
 
+  // filtered: only keyword search remains client-side
   const filtered = useMemo(() =>
-    issues
-      .filter((i) => issueMatchesKeyword(i, effectiveKeyword))
-      .filter((i) => {
-        if (!cutoffDate) return true;
-        return new Date(i.updated) >= cutoffDate;
-      })
-      .filter((i) => {
-        if (priorityFilter.size === 0) return true;
-        const ep = (getEffectivePriority(i) ?? "").toLowerCase();
-        // Normalise: p0/highest/blocker → p0, p1/high → p1, p2/medium → p2, p3/low → p3, p4/lowest → p4
-        const norm =
-          ep === "highest" || ep === "blocker" ? "p0" :
-          ep === "high" ? "p1" :
-          ep === "medium" ? "p2" :
-          ep === "low" ? "p3" :
-          ep === "lowest" ? "p4" : ep;
-        return priorityFilter.has(norm);
-      })
-      .filter((i) => {
-        if (labelsFilter.size === 0) return true;
-        return i.labels.some((l) => labelsFilter.has(l));
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issues, effectiveKeyword, cutoffDate, priorityFilter, labelsFilter, isKite]
+    issues.filter((i) => issueMatchesKeyword(i, effectiveKeyword)),
+    [issues, effectiveKeyword]
   );
 
   const sorted = useMemo(() => {
@@ -444,10 +398,10 @@ function IssueTable({
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 flex-wrap"
         style={{ background: "oklch(0.145 0.011 250)" }}>
         <StageFilterBar
-          activePreset={activePreset}
+          activePreset={stagePreset}
           customKeyword={customKeyword}
-          onPreset={(p) => { setActivePreset(p); setCustomKeyword(""); }}
-          onCustom={(v) => { setCustomKeyword(v); if (v) setActivePreset("All"); }}
+          onPreset={(p) => { onStagePresetChange(p); onStageKeywordChange(""); setCustomKeyword(""); }}
+          onCustom={(v) => { setCustomKeyword(v); if (v) { onStagePresetChange("All"); onStageKeywordChange(v); } else { onStageKeywordChange(""); } }}
           matchCount={sorted.length}
           totalCount={issues.length}
         />
@@ -484,7 +438,7 @@ function IssueTable({
         {[7, 14, 30, 90].map((d) => (
           <button
             key={d}
-            onClick={() => { setDaysFilter(d); setDaysInput(String(d)); }}
+            onClick={() => { onDaysFilterChange(d); setDaysInput(String(d)); }}
             className={`px-2 py-0.5 rounded text-xs font-medium transition-all flex-shrink-0 ${
               daysFilter === d && daysFilter > 0
                 ? "bg-primary/80 text-primary-foreground"
@@ -504,13 +458,13 @@ function IssueTable({
             onChange={(e) => setDaysInput(e.target.value)}
             onBlur={() => {
               const n = parseInt(daysInput);
-              if (!isNaN(n) && n > 0) setDaysFilter(n);
+              if (!isNaN(n) && n > 0) onDaysFilterChange(n);
               else { setDaysInput(String(daysFilter)); }
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 const n = parseInt(daysInput);
-                if (!isNaN(n) && n > 0) setDaysFilter(n);
+                if (!isNaN(n) && n > 0) onDaysFilterChange(n);
               }
             }}
             className="w-16 px-2 py-0.5 text-xs rounded bg-muted/60 border border-border/60 text-foreground text-center focus:outline-none focus:ring-1 focus:ring-primary/50"
@@ -519,7 +473,7 @@ function IssueTable({
         </div>
         {/* All time */}
         <button
-          onClick={() => { setDaysFilter(0); setDaysInput("0"); }}
+          onClick={() => { onDaysFilterChange(0); setDaysInput("0"); }}
           className={`px-2 py-0.5 rounded text-xs font-medium transition-all flex-shrink-0 ${
             daysFilter === 0
               ? "bg-primary/80 text-primary-foreground"
@@ -550,7 +504,7 @@ function IssueTable({
           ))}
           {priorityFilter.size > 0 && (
             <button
-              onClick={() => setPriorityFilter(new Set())}
+              onClick={() => onPriorityFilterChange(new Set())}
               className="px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:text-foreground transition-colors"
               title="Clear priority filter"
             >
@@ -560,7 +514,7 @@ function IssueTable({
         </div>
 
         {/* Status filter dropdown */}
-        <div className="relative flex-shrink-0">
+        <div className="relative flex-shrink-0" ref={statusDropdownRef}>
           <button
             onClick={() => setStatusOpen((v) => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
@@ -641,7 +595,7 @@ function IssueTable({
         </div>
 
         {/* Labels filter dropdown */}
-        <div className="relative flex-shrink-0">
+        <div className="relative flex-shrink-0" ref={labelsDropdownRef}>
           <button
             onClick={() => setLabelsOpen((v) => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
@@ -671,7 +625,7 @@ function IssueTable({
                 <div className="flex items-center gap-1">
                   {labelsFilter.size > 0 && (
                     <button
-                      onClick={() => setLabelsFilter(new Set())}
+                      onClick={() => onLabelsFilterChange(new Set())}
                       className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted/50"
                     >
                       Clear
@@ -1220,10 +1174,25 @@ export default function Dashboard() {
   const prevIssuesRef = useRef<JiraIssue[]>([]);
   const [myIssuesOnly, setMyIssuesOnly] = useState(true);
 
-  // Status filter lives at Dashboard level so it can be passed to the server-side query
+  // All filter state lives at Dashboard level and is passed to the server-side query
   const ALL_STATUSES = ["Backlog", "Triage", "To Do", "Blocked", "In Progress", "Closed"] as const;
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(["Triage", "In Progress"]));
   const statusFilterArray = useMemo(() => Array.from(statusFilter), [statusFilter]);
+
+  // Labels filter: default = "SW"
+  const [labelsFilter, setLabelsFilter] = useState<Set<string>>(new Set(["SW"]));
+  const labelsFilterArray = useMemo(() => Array.from(labelsFilter), [labelsFilter]);
+
+  // Priority filter: empty = All
+  const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set());
+  const priorityFilterArray = useMemo(() => Array.from(priorityFilter), [priorityFilter]);
+
+  // Updated-within-days filter: 30 = last 30 days, 0 = all time
+  const [daysFilter, setDaysFilter] = useState<number>(30);
+
+  // Stage preset (for JQL summary~ filter) and custom keyword (client-side only)
+  const [stagePreset, setStagePreset] = useState<StagePreset>("All");
+  const [stageKeyword, setStageKeyword] = useState("");
 
   const {
     data: issueData,
@@ -1231,7 +1200,15 @@ export default function Dashboard() {
     refetch,
     isFetching,
   } = trpc.jira.issues.useQuery(
-    { projectKey: activeKey, myIssues: myIssuesOnly, statusFilter: statusFilterArray },
+    {
+      projectKey: activeKey,
+      myIssues: myIssuesOnly,
+      statusFilter: statusFilterArray,
+      labelsFilter: labelsFilterArray,
+      priorityFilter: priorityFilterArray,
+      updatedWithinDays: daysFilter,
+      stageKeyword: stageKeyword,
+    },
     { enabled: !!activeKey, staleTime: 60_000 }
   );
 
@@ -1554,6 +1531,16 @@ export default function Dashboard() {
              statusFilter={statusFilter}
              onStatusFilterChange={setStatusFilter}
              allStatuses={ALL_STATUSES as unknown as string[]}
+             labelsFilter={labelsFilter}
+             onLabelsFilterChange={setLabelsFilter}
+             priorityFilter={priorityFilter}
+             onPriorityFilterChange={setPriorityFilter}
+             daysFilter={daysFilter}
+             onDaysFilterChange={setDaysFilter}
+             stagePreset={stagePreset}
+             onStagePresetChange={setStagePreset}
+             stageKeyword={stageKeyword}
+             onStageKeywordChange={setStageKeyword}
            />
         </div>
 

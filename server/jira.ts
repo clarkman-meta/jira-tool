@@ -163,7 +163,51 @@ function mapIssue(raw: unknown, baseUrl: string): JiraIssue {
   };
 }
 
+// ─── Strip hardcoded status/statusCategory exclusions from customJql ─────────
+// When the user provides an explicit statusFilter, we must remove any conflicting
+// hardcoded clauses from customJql so the user-controlled filter wins.
+
+function stripStatusClauses(jql: string): string {
+  // Remove: statusCategory != Done  /  statusCategory != "Done"
+  let result = jql.replace(/\bstatusCategory\s*!=\s*["']?Done["']?/gi, "");
+  // Remove: status != Closed  /  status != "Closed"
+  result = result.replace(/\bstatus\s*!=\s*["']?Closed["']?/gi, "");
+  // Remove: status NOT IN (...)  — handles any values inside
+  result = result.replace(/\bstatus\s+NOT\s+IN\s*\([^)]*\)/gi, "");
+  // Remove: statusCategory NOT IN (...)
+  result = result.replace(/\bstatusCategory\s+NOT\s+IN\s*\([^)]*\)/gi, "");
+  // Clean up dangling AND/OR connectors left by removal
+  result = result.replace(/\bAND\s+AND\b/gi, "AND");
+  result = result.replace(/\bAND\s*$/i, "");
+  result = result.replace(/^\s*AND\b/i, "");
+  result = result.replace(/\bOR\s+OR\b/gi, "OR");
+  return result.trim();
+}
+
+// ─── Normalise priority label → Jira priority name ────────────────────────────
+// UI uses p0/p1/p2; Jira stores "Highest", "High", "Medium", "Low", "Lowest"
+function normalisePriorityToJira(p: string): string[] {
+  switch (p.toLowerCase()) {
+    case "p0": return ["Highest", "Blocker"];
+    case "p1": return ["High"];
+    case "p2": return ["Medium"];
+    case "p3": return ["Low"];
+    case "p4": return ["Lowest"];
+    default:   return [p]; // pass-through for raw Jira names
+  }
+}
+
 // ─── Fetch ALL open issues for a project (cursor-based pagination) ────────────
+
+export interface FetchOpenIssuesOptions {
+  issueTypeFilter?: string | null;
+  customJql?: string | null;
+  statusFilter?: string[] | null;
+  labelsFilter?: string[] | null;       // e.g. ["SW", "HW"]
+  priorityFilter?: string[] | null;     // e.g. ["p0", "p1"] (UI notation)
+  updatedWithinDays?: number | null;    // e.g. 30 → updated >= -30d
+  stageKeyword?: string | null;         // e.g. "EVT" → summary ~ "EVT"
+}
 
 export async function fetchOpenIssues(
   projectKey: string,
@@ -171,24 +215,72 @@ export async function fetchOpenIssues(
   issueTypeFilter?: string | null,
   customJql?: string | null,
   statusFilter?: string[] | null,
+  opts?: FetchOpenIssuesOptions,
 ): Promise<JiraIssue[]> {
+  // Merge legacy positional params with opts for backward compat
+  const effectiveOpts: FetchOpenIssuesOptions = {
+    issueTypeFilter: issueTypeFilter ?? opts?.issueTypeFilter,
+    customJql: customJql ?? opts?.customJql,
+    statusFilter: statusFilter ?? opts?.statusFilter,
+    labelsFilter: opts?.labelsFilter,
+    priorityFilter: opts?.priorityFilter,
+    updatedWithinDays: opts?.updatedWithinDays,
+    stageKeyword: opts?.stageKeyword,
+  };
+
   let jql: string;
-  if (customJql && customJql.trim()) {
-    // Use the fully custom JQL as-is
-    jql = customJql.trim();
+  if (effectiveOpts.customJql && effectiveOpts.customJql.trim()) {
+    // Start with customJql, but override status clauses if statusFilter is provided
+    let base = effectiveOpts.customJql.trim();
+    if (effectiveOpts.statusFilter && effectiveOpts.statusFilter.length > 0) {
+      // User-controlled status filter wins: strip hardcoded status exclusions
+      base = stripStatusClauses(base);
+      const statusList = effectiveOpts.statusFilter.map((s) => `"${s}"`).join(", ");
+      base += ` AND status IN (${statusList})`;
+    }
+    jql = base;
   } else {
     jql = `project = ${projectKey}`;
-    if (issueTypeFilter) {
-      const types = issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
+    if (effectiveOpts.issueTypeFilter) {
+      const types = effectiveOpts.issueTypeFilter.split(",").map((t) => t.trim()).filter(Boolean);
       if (types.length > 0) {
         const typeList = types.map((t) => `"${t}"`).join(", ");
         jql += ` AND issuetype IN (${typeList})`;
       }
     }
-    if (statusFilter && statusFilter.length > 0) {
-      const statusList = statusFilter.map((s) => `"${s}"`).join(", ");
+    if (effectiveOpts.statusFilter && effectiveOpts.statusFilter.length > 0) {
+      const statusList = effectiveOpts.statusFilter.map((s) => `"${s}"`).join(", ");
       jql += ` AND status IN (${statusList})`;
     }
+  }
+
+  // ── Apply additional server-side filters (always appended, regardless of customJql) ──
+
+  // Labels filter
+  if (effectiveOpts.labelsFilter && effectiveOpts.labelsFilter.length > 0) {
+    const labelList = effectiveOpts.labelsFilter.map((l) => `"${l}"`).join(", ");
+    jql += ` AND labels IN (${labelList})`;
+  }
+
+  // Priority filter (UI notation → Jira names)
+  if (effectiveOpts.priorityFilter && effectiveOpts.priorityFilter.length > 0) {
+    const jiraNames = effectiveOpts.priorityFilter.flatMap(normalisePriorityToJira);
+    const priorityList = Array.from(new Set(jiraNames)).map((p) => `"${p}"`).join(", ");
+    jql += ` AND priority IN (${priorityList})`;
+  }
+
+  // Updated-within-days filter
+  if (effectiveOpts.updatedWithinDays && effectiveOpts.updatedWithinDays > 0) {
+    jql += ` AND updated >= -${effectiveOpts.updatedWithinDays}d`;
+  }
+
+  // Stage / keyword filter (summary contains)
+  if (effectiveOpts.stageKeyword && effectiveOpts.stageKeyword.trim()) {
+    jql += ` AND summary ~ "${effectiveOpts.stageKeyword.trim()}"`;
+  }
+
+  // Ensure ORDER BY is present
+  if (!/ORDER BY/i.test(jql)) {
     jql += " ORDER BY updated DESC";
   }
   const PAGE_SIZE = 100;
@@ -269,38 +361,46 @@ export async function fetchMyInvolvedIssues(
   projectKey?: string,
   statusFilter?: string[],
 ): Promise<Set<string>> {
-  // Build JQL: assignee OR reporter OR watcher (no comment ~ — we handle that separately)
   const projectClause = projectKey ? `project = ${projectKey} AND ` : "";
-  let jql = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}")`;
-  if (statusFilter && statusFilter.length > 0) {
-    const statusList = statusFilter.map((s) => `"${s}"`).join(", ");
-    jql += ` AND status IN (${statusList})`;
-  }
+  const statusClause = (statusFilter && statusFilter.length > 0)
+    ? ` AND status IN (${statusFilter.map((s) => `"${s}"`).join(", ")})`
+    : "";
+
+  // Two JQL queries run in parallel:
+  // 1. assignee / reporter / watcher (precise)
+  // 2. comment ~ accountId (full-text, used as candidate set for later precise verification)
+  const jqlDirect = `${projectClause}(assignee = "${accountId}" OR reporter = "${accountId}" OR watcher = "${accountId}")${statusClause}`;
+  const jqlComment = `${projectClause}comment ~ "${accountId}"${statusClause}`;
 
   const PAGE_SIZE = 100;
   const MAX_PAGES = 50;
   const involvedKeys = new Set<string>();
-  let nextPageToken: string | undefined = undefined;
-  let pageCount = 0;
+  // commentCandidates: issues found via comment ~ (need precise verification later)
+  const commentCandidates = new Set<string>();
 
-  do {
-    const body: Record<string, unknown> = {
-      jql,
-      maxResults: PAGE_SIZE,
-      fields: ["summary"],  // minimal fields — we only need the key
-    };
-    if (nextPageToken) body.nextPageToken = nextPageToken;
+  async function fetchAllKeys(jql: string, targetSet: Set<string>): Promise<void> {
+    let nextPageToken: string | undefined = undefined;
+    let pageCount = 0;
+    do {
+      const body: Record<string, unknown> = { jql, maxResults: PAGE_SIZE, fields: ["summary"] };
+      if (nextPageToken) body.nextPageToken = nextPageToken;
+      const response = await jiraClient.post("/rest/api/3/search/jql", body);
+      const data = response.data as { issues: { key: string }[]; nextPageToken?: string; isLast?: boolean };
+      for (const issue of data.issues ?? []) targetSet.add(issue.key);
+      nextPageToken = (data.isLast === false && data.nextPageToken) ? data.nextPageToken : undefined;
+      pageCount++;
+    } while (nextPageToken && pageCount < MAX_PAGES);
+  }
 
-    const response = await jiraClient.post("/rest/api/3/search/jql", body);
-    const data = response.data as { issues: { key: string }[]; nextPageToken?: string; isLast?: boolean };
+  // Run both queries in parallel
+  await Promise.all([
+    fetchAllKeys(jqlDirect, involvedKeys),
+    fetchAllKeys(jqlComment, commentCandidates),
+  ]);
 
-    for (const issue of data.issues ?? []) {
-      involvedKeys.add(issue.key);
-    }
-
-    nextPageToken = (data.isLast === false && data.nextPageToken) ? data.nextPageToken : undefined;
-    pageCount++;
-  } while (nextPageToken && pageCount < MAX_PAGES);
+  // Add comment candidates to involvedKeys so routers.ts can fetch + verify them
+  // (enrichWithCommentInvolvement will do precise accountId verification)
+  Array.from(commentCandidates).forEach((key) => involvedKeys.add(key));
 
   return involvedKeys;
 }
@@ -320,6 +420,23 @@ export async function enrichWithCommentInvolvement(
   const commentInvolved = await fetchCommentInvolvement(toCheck, accountId);
   Array.from(commentInvolved).forEach((key) => involvedKeys.add(key));
   return involvedKeys;
+}
+
+// ─── Fetch multiple issues by keys (for My Issues: fetch involved keys not in allIssues) ──────────
+
+export async function fetchIssuesByKeys(issueKeys: string[]): Promise<JiraIssue[]> {
+  if (issueKeys.length === 0) return [];
+  const fields = ["summary", "status", "assignee", "reporter", "updated", "comment", "priority", "issuetype", "customfield_10433", "labels"];
+  // Use JQL with issue key list — more efficient than N individual requests
+  const keyList = issueKeys.map((k) => `"${k}"`).join(", ");
+  const jql = `issueKey IN (${keyList})`;
+  const response = await jiraClient.post("/rest/api/3/search/jql", {
+    jql,
+    maxResults: issueKeys.length,
+    fields,
+  });
+  const data = response.data as { issues: unknown[] };
+  return (data.issues ?? []).map((raw) => mapIssue(raw, JIRA_BASE_URL));
 }
 
 // ─── Fetch a single issue by key ─────────────────────────────────────────────
