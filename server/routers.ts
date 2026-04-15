@@ -163,8 +163,13 @@ export const appRouter = router({
           const issueTypeFilter = (project as { issueTypeFilter?: string | null } | undefined)?.issueTypeFilter ?? null;
           const customJql = (project as { customJql?: string | null } | undefined)?.customJql ?? null;
 
-          // Pass customJql (or issueTypeFilter) and statusFilter to JQL for server-side filtering
-          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql, input.statusFilter.length > 0 ? input.statusFilter : null);
+          // Pass customJql (or issueTypeFilter) and statusFilter to JQL for server-side filtering.
+          // When myIssues=true, skip statusFilter so ALL statuses are fetched — involvement
+          // detection must see Closed/Done issues too. Status filtering is handled client-side.
+          const effectiveStatusFilter = input.myIssues
+            ? null
+            : (input.statusFilter.length > 0 ? input.statusFilter : null);
+          const allIssues = await fetchOpenIssues(input.projectKey, input.maxResults, issueTypeFilter, customJql, effectiveStatusFilter);
 
           // Apply titleFilter only when no customJql is set
           let issues = allIssues;

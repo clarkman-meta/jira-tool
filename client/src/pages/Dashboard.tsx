@@ -388,9 +388,15 @@ function IssueTable({
       .filter((i) => {
         if (labelsFilter.size === 0) return true;
         return i.labels.some((l) => labelsFilter.has(l));
+      })
+      .filter((i) => {
+        // In myIssues mode, server skips statusFilter so we apply it client-side here
+        if (!myIssuesOnly) return true;
+        if (statusFilter.size === 0) return true;
+        return statusFilter.has(i.status);
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issues, effectiveKeyword, cutoffDate, priorityFilter, labelsFilter, isKite]
+    [issues, effectiveKeyword, cutoffDate, priorityFilter, labelsFilter, isKite, myIssuesOnly, statusFilter]
   );
 
   const sorted = useMemo(() => {

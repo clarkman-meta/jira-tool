@@ -154,3 +154,13 @@
 - [x] Add enrichWithCommentInvolvement() exported function: given candidate issue keys, adds commenter/mentioned issues to the involvedKeys set
 - [x] Update fetchMyInvolvedIssues() to remove comment ~ JQL (imprecise text search) — now only uses assignee/reporter/watcher JQL
 - [x] Update routers.ts jira.issues: after JQL involvement, call enrichWithCommentInvolvement() for precise commenter/mentioned detection
+
+## Round 21 - Fix Missing Issues in My Issues View
+- [ ] Investigate DGTK-3112 (Clark commented) not appearing in My Issues
+- [ ] Investigate DGTK-3292 (Clark was previously assignee, now Closed?) not appearing in My Issues
+- [ ] Fix root cause(s): likely status filter exclusion or JQL involvement not covering these cases
+
+## Round 21 - Fix My Issues Status Filter Bug
+- [x] Server: when myIssues=true, pass null statusFilter to fetchOpenIssues (fetch all statuses)
+- [x] Client: when myIssues=true, apply status filter client-side so Closed issues can still be filtered by user
+- [x] Verify DGTK-3112 and DGTK-3292 appear in My Issues with Closed status selected
