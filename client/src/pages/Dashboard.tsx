@@ -427,6 +427,7 @@ function IssueTable({
           </TooltipTrigger>
           <TooltipContent>{myIssuesOnly ? "Showing issues where you are involved (assignee / reporter / watcher / commenter) — click to show all" : "Show only issues where you have any involvement"}</TooltipContent>
         </Tooltip>
+
       </div>
 
       {/* Filter Bar — Row 2: time filter */}

@@ -210,3 +210,10 @@
 - [x] Remove post-fetch titleFilter logic from routers.ts
 - [x] Add titleFilter param to FetchOpenIssuesOptions and pass from routers.ts
 - [x] Update tests to cover titleFilter JQL clause (3 new tests, 25 total)
+
+## Round 28 - Fix My Issues DGTK-3112 + Comment Scan Checkbox
+- [ ] Fix NOT JQL null issue: revert two-query to single query + field-based assignee/reporter check + watcher via separate JQL + comment scan remainder
+- [ ] Add includeCommentScan boolean param to tRPC jira.issues input (default true)
+- [ ] Add "搜尋留言/提及" checkbox to Dashboard My Issues filter bar (default ON)
+- [ ] Skip comment scan when includeCommentScan=false
+- [ ] Verify DGTK-3112 and DGTK-3292 both found with includeCommentScan=true
