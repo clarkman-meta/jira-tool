@@ -94,17 +94,17 @@ export async function getUserByOpenId(openId: string) {
 const DEFAULT_PROJECTS: InsertJiraProject[] = [
   {
     key: "DGTK", name: "Dragon", codename: "diamond", color: "#f59e0b", sortOrder: 0,
-    customJql: "project = DGTK AND parent = DGTK-234 AND statusCategory != Done AND status != Closed ORDER BY updated DESC",
+    customJql: "project = DGTK AND labels = SW AND statusCategory != Done ORDER BY priority ASC, updated DESC",
     titleFilter: null, issueTypeFilter: null,
   },
   {
     key: "TPZ", name: "SSG", codename: "topaz", color: "#10b981", sortOrder: 1,
-    customJql: 'project = TPZ AND summary ~ "[P2]" AND statusCategory != Done AND status != Closed ORDER BY updated DESC',
+    customJql: 'project = TPZ AND labels = SW AND statusCategory != Done ORDER BY priority ASC, updated DESC',
     titleFilter: null, issueTypeFilter: null,
   },
   {
     key: "KITE", name: "Hypernova2", codename: "kitefin", color: "#6366f1", sortOrder: 2,
-    customJql: 'project = KITE AND "Build[Dropdown]" IN (P0, P1) AND status NOT IN (Closed, Done) ORDER BY updated DESC',
+    customJql: 'project = KITE AND labels = SW AND statusCategory != Done ORDER BY priority ASC, updated DESC',
     titleFilter: null, issueTypeFilter: null,
   },
 ];
